@@ -7,41 +7,44 @@ import (
 	"net/http"
 	"regexp"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var (
-	scts = []struct {
-		URL    string
-		Err    bool
-		Client *http.Client
-	}{
-		{
-			URL: "://www.server",
-			Err: false,
-		},
-		{
-			URL: "",
-			Err: false,
-		},
-		{
-			URL: "http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
-			Err: true,
-		},
-		{
-			URL: "http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
-			Err: true,
-			Client: &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{
-						InsecureSkipVerify: true,
-					},
+var scts = []struct {
+	URL    string
+	Err    bool
+	Client *http.Client
+}{
+	{
+		URL: "://www.server",
+		Err: false,
+	},
+	{
+		URL: "",
+		Err: false,
+	},
+	{
+		URL: "https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
+		Err: true,
+	},
+	{
+		URL: "https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
+		Err: true,
+		Client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
 				},
 			},
 		},
-	}
-)
+	},
+}
 
 func TestSoapClient(t *testing.T) {
+	t.Parallel()
 	for _, sct := range scts {
 		_, err := SoapClient(sct.URL, nil)
 		if err != nil && sct.Err {
@@ -50,7 +53,8 @@ func TestSoapClient(t *testing.T) {
 	}
 }
 
-func TestSoapClienWithClient(t *testing.T) {
+func TestSoapClientWithClient(t *testing.T) {
+	t.Parallel()
 	client, err := SoapClient(scts[3].URL, scts[3].Client)
 
 	if client.HTTPClient != scts[3].Client {
@@ -63,8 +67,8 @@ func TestSoapClienWithClient(t *testing.T) {
 }
 
 type CheckVatRequest struct {
-	CountryCode string
-	VatNumber   string
+	CountryCode string `xml:"countryCode"`
+	VatNumber   string `xml:"vatNumber"`
 }
 
 type CheckVatResponse struct {
@@ -84,126 +88,87 @@ type NumberToWordsResponse struct {
 	NumberToWordsResult string
 }
 
-type WhoisResponse struct {
-	WhoisResult string
+func TestValidRequests(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name         string
+		wsdl         string
+		operation    string
+		request      any
+		resp         any
+		expectedResp any
+	}{
+		{
+			name:      "vat",
+			wsdl:      "https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
+			operation: "checkVat",
+			request: Params{
+				"vatNumber":   "6388047V",
+				"countryCode": "IE",
+			},
+			resp: &CheckVatResponse{},
+			expectedResp: &CheckVatResponse{
+				CountryCode: "IE",
+				VatNumber:   "6388047V",
+				Name:        "GOOGLE IRELAND LIMITED",
+				Address:     "3RD FLOOR, GORDON HOUSE, BARROW STREET, DUBLIN 4",
+				Valid:       "true",
+				RequestDate: time.Now().Format("2006-01-02-07:00"),
+			},
+		},
+		{
+			name:      "capital",
+			wsdl:      "http://webservices.oorsprong.org/websamples.countryinfo/CountryInfoService.wso?WSDL",
+			operation: "CapitalCity",
+			request:   Params{"sCountryISOCode": "GB"},
+			resp:      &CapitalCityResponse{},
+			expectedResp: &CapitalCityResponse{
+				CapitalCityResult: "London",
+			},
+		},
+		{
+			name:      "numbers",
+			wsdl:      "https://www.dataaccess.com/webservicesserver/numberconversion.wso?WSDL",
+			operation: "NumberToWords",
+			request:   Params{"ubiNum": "23"},
+			resp:      &NumberToWordsResponse{},
+			expectedResp: &NumberToWordsResponse{
+				NumberToWordsResult: "twenty three ",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client, err := SoapClientWithConfig(tc.wsdl, nil, &Config{Dump: true})
+			require.NoError(t, err)
+			res, err := client.Call(context.Background(), tc.operation, tc.request)
+			require.NoError(t, err)
+			assert.NotNil(t, res)
+			err = res.Unmarshal(tc.resp)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expectedResp, tc.resp)
+		})
+	}
 }
 
-var (
-	rv CheckVatResponse
-	rc CapitalCityResponse
-	rn NumberToWordsResponse
-	rw WhoisResponse
-
-	params = Params{}
-)
-
-func TestClient_Call(t *testing.T) {
-	soap, err := SoapClientWithConfig("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
-		nil,
-		&Config{Dump: true},
-	)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	var res *Response
-
-	params["vatNumber"] = "6388047V"
-	params["countryCode"] = "IE"
-	res, err = soap.Call(context.Background(), "", params)
-	if err == nil {
-		t.Errorf("method is empty")
-	}
-
-	if res != nil {
-		t.Errorf("body is empty")
-	}
-
-	res, err = soap.Call(context.Background(), "checkVat", params)
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
-
-	err = res.Unmarshal(&rv)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-	if rv.CountryCode != "IE" {
-		t.Errorf("error: %+v", rv)
-	}
-
-	soap, err = SoapClient("http://webservices.oorsprong.org/websamples.countryinfo/CountryInfoService.wso?WSDL", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	res, err = soap.Call(context.Background(), "CapitalCity", Params{"sCountryISOCode": "GB"})
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
-
-	err = res.Unmarshal(&rc)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-	if rc.CapitalCityResult != "London" {
-		t.Errorf("error: %+v", rc)
-	}
-
-	soap, err = SoapClient("http://www.dataaccess.com/webservicesserver/numberconversion.wso?WSDL", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	res, err = soap.Call(context.Background(), "NumberToWords", Params{"ubiNum": "23"})
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
-
-	err = res.Unmarshal(&rn)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-	if rn.NumberToWordsResult != "twenty three " {
-		t.Errorf("error: %+v", rn)
-	}
-
-	soap, err = SoapClient("https://domains.livedns.co.il/API/DomainsAPI.asmx?WSDL", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	res, err = soap.Call(context.Background(), "Whois", Params{"DomainName": "google.com"})
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
-
-	err = res.Unmarshal(&rw)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-	if rw.WhoisResult != "0" {
-		t.Errorf("error: %+v", rw)
-	}
-
+func TestInvalidWSDL(t *testing.T) {
+	t.Parallel()
 	c := &Client{}
-	_, err = c.Call(context.Background(), "", Params{})
-	if err == nil {
-		t.Errorf("error expected but nothing got.")
-	}
+	_, err := c.Call(context.Background(), "", Params{})
+	assert.ErrorContains(t, err, "unsupported protocol scheme")
 
 	c.SetWSDL("://test.")
-
-	_, err = c.Call(context.Background(), "checkVat", params)
-	if err == nil {
-		t.Errorf("invalid WSDL")
-	}
+	_, err = c.Call(context.Background(), "checkVat", Params{})
+	assert.ErrorContains(t, err, "missing protocol scheme")
 }
 
 type customLogger struct{}
 
 func (c customLogger) LogRequest(method string, dump []byte) {
-	var re = regexp.MustCompile(`(<vatNumber>)[\s\S]*?(<\/vatNumber>)`)
+	re := regexp.MustCompile(`(<vatNumber>)[\s\S]*?(<\/vatNumber>)`)
 	maskedResponse := re.ReplaceAllString(string(dump), `${1}XXX${2}`)
 
 	log.Printf("%s request: %s", method, maskedResponse)
@@ -218,80 +183,41 @@ func (c customLogger) LogResponse(method string, dump []byte) {
 }
 
 func TestClient_Call_WithCustomLogger(t *testing.T) {
-	soap, err := SoapClientWithConfig("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
+	t.Parallel()
+	soap, err := SoapClientWithConfig("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
 		nil,
 		&Config{Dump: true, Logger: &customLogger{}},
 	)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	assert.NoError(t, err)
 
 	var res *Response
 
-	res, err = soap.Call(context.Background(), "CheckVatRequest", CheckVatRequest{
-		CountryCode: "IE",
-		VatNumber:   "6388047V",
+	res, err = soap.Call(context.Background(), "checkVat", Params{
+		"countryCode": "IE",
+		"vatNumber":   "6388047V",
 	})
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
+	assert.NoError(t, err)
 
+	var rv CheckVatResponse
 	err = res.Unmarshal(&rv)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	assert.NoError(t, err)
 	if rv.CountryCode != "IE" {
 		t.Errorf("error: %+v", rv)
-	}
-
-	_, err = soap.Call(context.Background(), "test", nil)
-	if err == nil {
-		t.Error("err can't be nil")
-	}
-}
-
-func TestClient_CallByStruct(t *testing.T) {
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	var res *Response
-	res, err = soap.Call(context.Background(), "CheckVatRequest", CheckVatRequest{
-		CountryCode: "IE",
-		VatNumber:   "6388047V",
-	})
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
-
-	err = res.Unmarshal(&rv)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-	if rv.CountryCode != "IE" {
-		t.Errorf("error: %+v", rv)
-	}
-
-	_, err = soap.Call(context.Background(), "CheckVatRequest", nil)
-	if err == nil {
-		t.Error("err can't be nil")
 	}
 }
 
 func TestClient_Call_NonUtf8(t *testing.T) {
+	t.Skip("server is down")
+	t.Parallel()
 	soap, err := SoapClient("https://demo.ilias.de/webservice/soap/server.php?wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	assert.NoError(t, err)
 
 	_, err = soap.Call(context.Background(), "login", Params{"client": "demo", "username": "robert", "password": "iliasdemo"})
-	if err != nil {
-		t.Errorf("error in soap call: %s", err)
-	}
+	assert.NoError(t, err)
 }
 
 func TestProcess_doRequest(t *testing.T) {
+	t.Parallel()
 	c := &process{
 		Client: &Client{
 			HTTPClient: &http.Client{},

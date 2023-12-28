@@ -10,10 +10,11 @@ import (
 )
 
 func TestUnmarshal(t *testing.T) {
-	var testCases = []struct {
+	t.Parallel()
+	testCases := []struct {
 		description   string
 		response      *Response
-		decodeStruct  interface{}
+		decodeStruct  any
 		expectedFault Fault
 		expectedError string
 	}{
@@ -97,22 +98,25 @@ func TestUnmarshal(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		t.Logf("running %v test case", testCase.description)
-
-		err := testCase.response.Unmarshal(testCase.decodeStruct)
-		if testCase.expectedFault.Code != "" {
-			assert.True(t, errors.As(err, &FaultError{}), "should be a fault error")
-			assert.ErrorIs(t, err, FaultError{Fault: testCase.expectedFault})
-		} else if testCase.expectedError != "" {
-			assert.EqualError(t, err, testCase.expectedError)
-		} else {
-			assert.NoError(t, err)
-		}
+		testCase := testCase
+		t.Run(testCase.description, func(t *testing.T) {
+			t.Parallel()
+			err := testCase.response.Unmarshal(testCase.decodeStruct)
+			if testCase.expectedFault.Code != "" {
+				assert.True(t, errors.As(err, &FaultError{}), "should be a fault error")
+				assert.ErrorIs(t, err, FaultError{Fault: testCase.expectedFault})
+			} else if testCase.expectedError != "" {
+				assert.EqualError(t, err, testCase.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
 	}
 }
 
 func TestIsFault(t *testing.T) {
-	var testCases = []struct {
+	t.Parallel()
+	testCases := []struct {
 		description          string
 		err                  error
 		expectedIsFaultError bool

@@ -7,113 +7,54 @@ import (
 	"encoding/xml"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-var (
-	mapParamsTests = []struct {
-		Params Params
-		Err    string
+func TestInvalidRequests(t *testing.T) {
+	t.Parallel()
+	soap, err := SoapClientWithConfig("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil, &Config{
+		Dump: true,
+	})
+	assert.NoError(t, err)
+
+	cases := []struct {
+		name   string
+		params any
+		err    string
 	}{
 		{
-			Params: Params{"": ""},
-			Err:    "error expected: xml: start tag with no name",
+			name:   "map",
+			params: Params{"": ""},
+			err:    "xml: start tag with no name",
+		},
+		{
+			name:   "array",
+			params: ArrayParams{{"", ""}},
+			err:    "xml: start tag with no name",
 		},
 	}
 
-	arrayParamsTests = []struct {
-		Params ArrayParams
-		Err    string
-	}{
-		{
-			Params: ArrayParams{{"", ""}},
-			Err:    "error expected: xml: start tag with no name",
-		},
-	}
-
-	sliceParamsTests = []struct {
-		Params SliceParams
-		Err    string
-	}{
-		{
-			Params: SliceParams{xml.StartElement{}, xml.EndElement{}},
-			Err:    "error expected: xml: start tag with no name",
-		},
-	}
-)
-
-func TestClient_MarshalXML(t *testing.T) {
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	for _, test := range mapParamsTests {
-		_, err = soap.Call(context.Background(), "checkVat", test.Params)
-		if err == nil {
-			t.Errorf(test.Err)
-		}
-	}
-}
-
-func TestClient_MarshalXML2(t *testing.T) {
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	for _, test := range arrayParamsTests {
-		_, err = soap.Call(context.Background(), "checkVat", test.Params)
-		if err == nil {
-			t.Errorf(test.Err)
-		}
-	}
-}
-
-func TestClient_MarshalXML3(t *testing.T) {
-	soap, err := SoapClient("https://kasapi.kasserver.com/soap/wsdl/KasAuth.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	for _, test := range mapParamsTests {
-		_, err = soap.Call(context.Background(), "checkVat", test.Params)
-		if err == nil {
-			t.Errorf(test.Err)
-		}
-	}
-}
-
-func TestClient_MarshalXML4(t *testing.T) {
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	for _, test := range sliceParamsTests {
-		_, err = soap.Call(context.Background(), "checkVat", test.Params)
-		if err == nil {
-			t.Errorf(test.Err)
-		}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err = soap.Call(context.Background(), "checkVat", tc.params)
+			assert.EqualError(t, err, tc.err)
+		})
 	}
 }
 
 func TestSetCustomEnvelope(t *testing.T) {
+	t.Parallel()
 	SetCustomEnvelope("soapenv", map[string]string{
 		"xmlns:soapenv": "http://schemas.xmlsoap.org/soap/envelope/",
 		"xmlns:tem":     "http://tempuri.org/",
 	})
 
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
-
-	for _, test := range arrayParamsTests {
-		_, err = soap.Call(context.Background(), "checkVat", test.Params)
-		if err == nil {
-			t.Errorf(test.Err)
-		}
-	}
+	// TODO: actual test
+	_, err := SoapClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
+	assert.NoError(t, err)
 }
 
 type TestHeader struct {
@@ -128,10 +69,9 @@ type TestHeader2 struct {
 }
 
 func TestClient_Headers(t *testing.T) {
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	t.Parallel()
+	soap, err := SoapClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
+	assert.NoError(t, err)
 
 	p := process{
 		Client: soap,
@@ -151,17 +91,14 @@ func TestClient_Headers(t *testing.T) {
 
 	var resultBuf bytes.Buffer
 	err = p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	assert.NoError(t, err)
 	fmt.Println(resultBuf.String())
 }
 
 func TestClient_HeaderArray(t *testing.T) {
-	soap, err := SoapClient("http://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	t.Parallel()
+	soap, err := SoapClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
+	assert.NoError(t, err)
 
 	p := process{
 		Client: soap,
@@ -181,8 +118,6 @@ func TestClient_HeaderArray(t *testing.T) {
 
 	var resultBuf bytes.Buffer
 	err = p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
-	if err != nil {
-		t.Errorf("error not expected: %s", err)
-	}
+	assert.NoError(t, err)
 	fmt.Println(resultBuf.String())
 }

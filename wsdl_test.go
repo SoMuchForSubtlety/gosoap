@@ -1,26 +1,19 @@
 package gosoap
 
 import (
-	"fmt"
 	"os"
-	"runtime"
-	"strings"
+	"path/filepath"
 	"testing"
 
 	"gotest.tools/assert"
 )
 
 func Test_getWsdlBody(t *testing.T) {
+	t.Parallel()
 	type args struct {
 		u string
 	}
 	dir, _ := os.Getwd()
-
-	// in windows, os.Getwd() returns backslash (\) instead slash (/) for path separator
-	// replacing the backslash for slash make the test happy on Windows
-	if runtime.GOOS == "windows" {
-		dir = strings.ReplaceAll(dir, `\`, "/")
-	}
 
 	tests := []struct {
 		name    string
@@ -29,19 +22,19 @@ func Test_getWsdlBody(t *testing.T) {
 	}{
 		{
 			args: args{
-				u: "http://[::1]:namedport",
+				u: "https://[::1]:namedport",
 			},
 			wantErr: true,
 		},
 		{
 			args: args{
-				u: fmt.Sprintf("%s/%s", dir, "testdata/ipservice.wsdl"),
+				u: filepath.Join(dir, "testdata/ipservice.wsdl"),
 			},
 			wantErr: true,
 		},
 		{
 			args: args{
-				u: fmt.Sprintf("file://%s/%s", dir, "testdata/ipservice.wsdl"),
+				u: "file://" + filepath.Join(dir, "testdata/ipservice.wsdl"),
 			},
 			wantErr: false,
 		},
@@ -59,7 +52,9 @@ func Test_getWsdlBody(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := getWsdlBody(tt.args.u, nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getwsdlBody() error = %v, wantErr %v", err, tt.wantErr)
@@ -70,7 +65,8 @@ func Test_getWsdlBody(t *testing.T) {
 }
 
 func TestFaultString(t *testing.T) {
-	var testCases = []struct {
+	t.Parallel()
+	testCases := []struct {
 		description      string
 		fault            *Fault
 		expectedFaultStr string

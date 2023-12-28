@@ -18,15 +18,18 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
-type SoapParams interface{}
+type SoapParams any
 
 // HeaderParams holds params specific to the header
 type HeaderParams []SoapParams
 
 // Params type is used to set the params in soap request
-type Params map[string]interface{}
-type ArrayParams [][2]interface{}
-type SliceParams []interface{}
+type Params map[string]any
+
+type (
+	ArrayParams [][2]any
+	SliceParams []any
+)
 
 type DumpLogger interface {
 	LogRequest(method string, dump []byte)

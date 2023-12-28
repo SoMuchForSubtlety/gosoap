@@ -11,7 +11,7 @@ var (
 	customEnvelopeAttrs map[string]string = nil
 )
 
-// SetCustomEnvelope define customizated envelope
+// SetCustomEnvelope define customized envelope
 func SetCustomEnvelope(prefix string, attrs map[string]string) {
 	soapPrefix = prefix
 	if attrs != nil {
@@ -20,38 +20,39 @@ func SetCustomEnvelope(prefix string, attrs map[string]string) {
 }
 
 // MarshalXML envelope the body and encode to xml
-func (c process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+func (p *process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	segments := &tokenData{}
 
-	//start envelope
-	if c.Client.Definitions == nil {
+	// start envelope
+	if p.Client.Definitions == nil {
 		return fmt.Errorf("definitions is nil")
 	}
 
 	namespace := ""
-	if c.Client.Definitions.Types != nil {
-		schema := c.Client.Definitions.Types[0].XsdSchema[0]
+	if p.Client.Definitions.Types != nil {
+		schema := p.Client.Definitions.Types[0].XsdSchema[0]
 		namespace = schema.TargetNamespace
 		if namespace == "" && len(schema.Imports) > 0 {
 			namespace = schema.Imports[0].Namespace
 		}
 	}
+	segments.startEnvelope()
 
-	if c.Request.HeaderEntries != nil {
-		segments.startEnvelope()
+	if p.Request.HeaderEntries != nil {
 		segments.startHeader()
+		segments.recursiveEncode(p.Request.HeaderEntries)
 		segments.endHeader()
 	}
 
-	err := segments.startBody(c.Request.WSDLOperation, namespace)
+	err := segments.startBody(p.Request.WSDLOperation, namespace)
 	if err != nil {
 		return err
 	}
 
-	segments.recursiveEncode(c.Request.Body)
+	segments.recursiveEncode(p.Request.Body)
 
-	//end envelope
-	segments.endBody(c.Request.WSDLOperation)
+	// end envelope
+	segments.endBody(p.Request.WSDLOperation)
 	segments.endEnvelope()
 
 	for _, t := range segments.data {
@@ -78,7 +79,7 @@ type segment struct {
 	value any
 }
 
-func (tokens *tokenData) recursiveEncode(hm interface{}) {
+func (tokens *tokenData) recursiveEncode(hm any) {
 	v := reflect.ValueOf(hm)
 
 	switch v.Kind() {
@@ -190,7 +191,7 @@ func (tokens *tokenData) startBody(wsdlOperation, namespace string) error {
 	}
 
 	if wsdlOperation == "" {
-		return fmt.Errorf("method is empty")
+		return fmt.Errorf("operation is empty")
 	} else if namespace == "" {
 		return fmt.Errorf("namespace is empty")
 	}

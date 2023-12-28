@@ -194,7 +194,7 @@ func getWsdlDefinitions(u string, c *http.Client) (wsdl *wsdlDefinitions, err er
 	return wsdl, err
 }
 
-// the SoapAction of an operation might differ from the action wsdl-operation name
+// GetSoapActionFromWsdlOperation the SoapAction of an operation might differ from the action wsdl-operation name
 // if any SoapAction name is set in the wsdlOperation binding, use that.
 func (wsdl *wsdlDefinitions) GetSoapActionFromWsdlOperation(operation string) string {
 	// in the future it would be nice to have Operations be map[string]*wsdlOperation,
@@ -211,7 +211,7 @@ func (wsdl *wsdlDefinitions) GetSoapActionFromWsdlOperation(operation string) st
 	return ""
 }
 
-// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383507
+// Fault see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383507
 type Fault struct {
 	Code        string `xml:"faultcode"`
 	Description string `xml:"faultstring"`
