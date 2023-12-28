@@ -1,32 +1,20 @@
 package gosoap
 
-import (
-	"fmt"
-)
-
-// Request Soap Request
+// A representation of a SOAP Request
 type Request struct {
-	Method string
-	Params SoapParams
+	// wsdl operation name, this will be used to map to a SOAP action
+	// https://www.w3.org/TR/2001/NOTE-wsdl-20010315#_soap:operation
+	WSDLOperation string
+	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383503
+	Body any
+	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383497
+	HeaderEntries []any
 }
 
-func NewRequest(m string, p SoapParams) *Request {
+func NewRequest(wsdlOperation string, body any, headerBlocks ...any) *Request {
 	return &Request{
-		Method: m,
-		Params: p,
+		WSDLOperation: wsdlOperation,
+		Body:          body,
+		HeaderEntries: headerBlocks,
 	}
-}
-
-// RequestStruct soap request interface
-type RequestStruct interface {
-	SoapBuildRequest() *Request
-}
-
-// NewRequestByStruct create a new request using builder
-func NewRequestByStruct(s RequestStruct) (*Request, error) {
-	if s == nil {
-		return nil, fmt.Errorf("'s' cannot be 'nil'")
-	}
-
-	return s.SoapBuildRequest(), nil
 }

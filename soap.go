@@ -2,6 +2,7 @@ package gosoap
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -20,7 +21,7 @@ import (
 type SoapParams interface{}
 
 // HeaderParams holds params specific to the header
-type HeaderParams map[string]interface{}
+type HeaderParams []SoapParams
 
 // Params type is used to set the params in soap request
 type Params map[string]interface{}
@@ -74,6 +75,7 @@ func SoapClientWithConfig(wsdl string, httpClient *http.Client, config *Config) 
 		HTTPClient: httpClient,
 		AutoAction: false,
 	}
+	c.initWsdl()
 
 	return c, nil
 }
@@ -81,12 +83,10 @@ func SoapClientWithConfig(wsdl string, httpClient *http.Client, config *Config) 
 // Client struct hold all the information about WSDL,
 // request and response of the server
 type Client struct {
-	HTTPClient   *http.Client
-	AutoAction   bool
-	URL          string
-	HeaderName   string
-	HeaderParams SoapParams
-	Definitions  *wsdlDefinitions
+	HTTPClient  *http.Client
+	AutoAction  bool
+	URL         string
+	Definitions *wsdlDefinitions
 	// Must be set before first request otherwise has no effect, minimum is 15 minutes.
 	RefreshDefinitionsAfter time.Duration
 	Username                string
@@ -100,19 +100,8 @@ type Client struct {
 	config               *Config
 }
 
-// Call call's the method m with Params p
-func (c *Client) Call(m string, p SoapParams) (res *Response, err error) {
-	return c.Do(NewRequest(m, p))
-}
-
-// CallByStruct call's by struct
-func (c *Client) CallByStruct(s RequestStruct) (res *Response, err error) {
-	req, err := NewRequestByStruct(s)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.Do(req)
+func (c *Client) Call(ctx context.Context, wsdlOperation string, body any, headerParams ...any) (res *Response, err error) {
+	return c.Do(ctx, NewRequest(wsdlOperation, body, headerParams...))
 }
 
 func (c *Client) waitAndRefreshDefinitions(d time.Duration) {
@@ -145,7 +134,7 @@ func (c *Client) SetWSDL(wsdl string) {
 }
 
 // Do Process Soap Request
-func (c *Client) Do(req *Request) (res *Response, err error) {
+func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error) {
 	c.onDefinitionsRefresh.Wait()
 	c.onRequest.Add(1)
 	defer c.onRequest.Done()
@@ -166,18 +155,18 @@ func (c *Client) Do(req *Request) (res *Response, err error) {
 		return nil, errors.New("wsdl definitions not found")
 	}
 
-	if c.Definitions.Services == nil {
-		return nil, errors.New("No Services found in wsdl definitions")
+	if len(c.Definitions.Services) == 0 {
+		return nil, errors.New("no services found in wsdl definitions")
 	}
 
 	p := &process{
 		Client:     c,
 		Request:    req,
-		SoapAction: c.Definitions.GetSoapActionFromWsdlOperation(req.Method),
+		SoapAction: c.Definitions.GetSoapActionFromWsdlOperation(req.WSDLOperation),
 	}
 
 	if p.SoapAction == "" && c.AutoAction {
-		p.SoapAction = fmt.Sprintf("%s/%s/%s", c.URL, c.Definitions.Services[0].Name, req.Method)
+		p.SoapAction = fmt.Sprintf("%s/%s/%s", c.URL, c.Definitions.Services[0].Name, req.WSDLOperation)
 	}
 
 	p.Payload, err = xml.MarshalIndent(p, "", "    ")
@@ -185,7 +174,7 @@ func (c *Client) Do(req *Request) (res *Response, err error) {
 		return nil, err
 	}
 
-	b, err := p.doRequest(c.Definitions.Services[0].Ports[0].SoapAddresses[0].Location)
+	b, err := p.doRequest(ctx, c.Definitions.Services[0].Ports[0].SoapAddresses[0].Location)
 	if err != nil {
 		return nil, ErrorWithPayload{err, p.Payload}
 	}
@@ -201,9 +190,8 @@ func (c *Client) Do(req *Request) (res *Response, err error) {
 	err = decoder.Decode(&soap)
 
 	res = &Response{
-		Body:    soap.Body.Contents,
-		Header:  soap.Header.Contents,
-		Payload: p.Payload,
+		Body:          soap.Body.Contents,
+		HeaderEntries: soap.Header.Contents,
 	}
 	if err != nil {
 		return res, ErrorWithPayload{err, p.Payload}
@@ -213,16 +201,17 @@ func (c *Client) Do(req *Request) (res *Response, err error) {
 }
 
 type process struct {
-	Client     *Client
-	Request    *Request
+	Client  *Client
+	Request *Request
+	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383528
 	SoapAction string
 	Payload    []byte
 }
 
 // doRequest makes new request to the server using the c.Method, c.URL and the body.
 // body is enveloped in Do method
-func (p *process) doRequest(url string) ([]byte, error) {
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(p.Payload))
+func (p *process) doRequest(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(p.Payload))
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +221,7 @@ func (p *process) doRequest(url string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		p.Client.config.Logger.LogRequest(p.Request.Method, dump)
+		p.Client.config.Logger.LogRequest(p.Request.WSDLOperation, dump)
 	}
 
 	if p.Client.Username != "" && p.Client.Password != "" {
@@ -258,7 +247,7 @@ func (p *process) doRequest(url string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		p.Client.config.Logger.LogResponse(p.Request.Method, dump)
+		p.Client.config.Logger.LogResponse(p.Request.WSDLOperation, dump)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
@@ -271,7 +260,7 @@ func (p *process) doRequest(url string) ([]byte, error) {
 		return nil, errors.New("unexpected status code: " + resp.Status)
 	}
 
-	return ioutil.ReadAll(resp.Body)
+	return io.ReadAll(resp.Body)
 }
 
 func (p *process) httpClient() *http.Client {

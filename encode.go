@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	soapPrefix = "soap"
+	soapPrefix                            = "soap"
 	customEnvelopeAttrs map[string]string = nil
 )
 
@@ -21,7 +21,7 @@ func SetCustomEnvelope(prefix string, attrs map[string]string) {
 
 // MarshalXML envelope the body and encode to xml
 func (c process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
-	tokens := &tokenData{}
+	segments := &tokenData{}
 
 	//start envelope
 	if c.Client.Definitions == nil {
@@ -37,26 +37,30 @@ func (c process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		}
 	}
 
-	tokens.startEnvelope()
-	if c.Client.HeaderParams != nil {
-		tokens.startHeader(c.Client.HeaderName, namespace)
-		tokens.recursiveEncode(c.Client.HeaderParams)
-		tokens.endHeader(c.Client.HeaderName)
+	if c.Request.HeaderEntries != nil {
+		segments.startEnvelope()
+		segments.startHeader()
+		segments.endHeader()
 	}
 
-	err := tokens.startBody(c.Request.Method, namespace)
+	err := segments.startBody(c.Request.WSDLOperation, namespace)
 	if err != nil {
 		return err
 	}
 
-	tokens.recursiveEncode(c.Request.Params)
+	segments.recursiveEncode(c.Request.Body)
 
 	//end envelope
-	tokens.endBody(c.Request.Method)
-	tokens.endEnvelope()
+	segments.endBody(c.Request.WSDLOperation)
+	segments.endEnvelope()
 
-	for _, t := range tokens.data {
-		err := e.EncodeToken(t)
+	for _, t := range segments.data {
+		var err error
+		if t.token != nil {
+			err = e.EncodeToken(t.token)
+		} else {
+			err = e.Encode(t.value)
+		}
 		if err != nil {
 			return err
 		}
@@ -66,7 +70,12 @@ func (c process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 }
 
 type tokenData struct {
-	data []xml.Token
+	data []segment
+}
+
+type segment struct {
+	token xml.Token
+	value any
 }
 
 func (tokens *tokenData) recursiveEncode(hm interface{}) {
@@ -82,9 +91,9 @@ func (tokens *tokenData) recursiveEncode(hm interface{}) {
 				},
 			}
 
-			tokens.data = append(tokens.data, t)
+			tokens.data = append(tokens.data, segment{token: t})
 			tokens.recursiveEncode(v.MapIndex(key).Interface())
-			tokens.data = append(tokens.data, xml.EndElement{Name: t.Name})
+			tokens.data = append(tokens.data, segment{token: xml.EndElement{Name: t.Name}})
 		}
 	case reflect.Slice:
 		for i := 0; i < v.Len(); i++ {
@@ -100,15 +109,15 @@ func (tokens *tokenData) recursiveEncode(hm interface{}) {
 				},
 			}
 
-			tokens.data = append(tokens.data, t)
+			tokens.data = append(tokens.data, segment{token: t})
 			tokens.recursiveEncode(v.Index(1).Interface())
-			tokens.data = append(tokens.data, xml.EndElement{Name: t.Name})
+			tokens.data = append(tokens.data, segment{token: xml.EndElement{Name: t.Name}})
 		}
 	case reflect.String:
 		content := xml.CharData(v.String())
-		tokens.data = append(tokens.data, content)
+		tokens.data = append(tokens.data, segment{token: content})
 	case reflect.Struct:
-		tokens.data = append(tokens.data, v.Interface())
+		tokens.data = append(tokens.data, segment{value: hm})
 	}
 }
 
@@ -130,13 +139,13 @@ func (tokens *tokenData) startEnvelope() {
 		e.Attr = make([]xml.Attr, 0)
 		for local, value := range customEnvelopeAttrs {
 			e.Attr = append(e.Attr, xml.Attr{
-				Name: xml.Name{Space: "", Local: local},
+				Name:  xml.Name{Space: "", Local: local},
 				Value: value,
 			})
 		}
 	}
 
-	tokens.data = append(tokens.data, e)
+	tokens.data = append(tokens.data, segment{token: e})
 }
 
 func (tokens *tokenData) endEnvelope() {
@@ -147,10 +156,10 @@ func (tokens *tokenData) endEnvelope() {
 		},
 	}
 
-	tokens.data = append(tokens.data, e)
+	tokens.data = append(tokens.data, segment{token: e})
 }
 
-func (tokens *tokenData) startHeader(m, n string) {
+func (tokens *tokenData) startHeader() {
 	h := xml.StartElement{
 		Name: xml.Name{
 			Space: "",
@@ -158,27 +167,10 @@ func (tokens *tokenData) startHeader(m, n string) {
 		},
 	}
 
-	if m == "" || n == "" {
-		tokens.data = append(tokens.data, h)
-		return
-	}
-
-	r := xml.StartElement{
-		Name: xml.Name{
-			Space: "",
-			Local: m,
-		},
-		Attr: []xml.Attr{
-			{Name: xml.Name{Space: "", Local: "xmlns"}, Value: n},
-		},
-	}
-
-	tokens.data = append(tokens.data, h, r)
-
-	return
+	tokens.data = append(tokens.data, segment{token: h})
 }
 
-func (tokens *tokenData) endHeader(m string) {
+func (tokens *tokenData) endHeader() {
 	h := xml.EndElement{
 		Name: xml.Name{
 			Space: "",
@@ -186,22 +178,10 @@ func (tokens *tokenData) endHeader(m string) {
 		},
 	}
 
-	if m == "" {
-		tokens.data = append(tokens.data, h)
-		return
-	}
-
-	r := xml.EndElement{
-		Name: xml.Name{
-			Space: "",
-			Local: m,
-		},
-	}
-
-	tokens.data = append(tokens.data, r, h)
+	tokens.data = append(tokens.data, segment{token: h})
 }
 
-func (tokens *tokenData) startBody(m, n string) error {
+func (tokens *tokenData) startBody(wsdlOperation, namespace string) error {
 	b := xml.StartElement{
 		Name: xml.Name{
 			Space: "",
@@ -209,27 +189,29 @@ func (tokens *tokenData) startBody(m, n string) error {
 		},
 	}
 
-	if m == "" || n == "" {
-		return fmt.Errorf("method or namespace is empty")
+	if wsdlOperation == "" {
+		return fmt.Errorf("method is empty")
+	} else if namespace == "" {
+		return fmt.Errorf("namespace is empty")
 	}
 
 	r := xml.StartElement{
 		Name: xml.Name{
 			Space: "",
-			Local: m,
+			Local: wsdlOperation,
 		},
 		Attr: []xml.Attr{
-			{Name: xml.Name{Space: "", Local: "xmlns"}, Value: n},
+			{Name: xml.Name{Space: "", Local: "xmlns"}, Value: namespace},
 		},
 	}
 
-	tokens.data = append(tokens.data, b, r)
+	tokens.data = append(tokens.data, segment{token: b}, segment{token: r})
 
 	return nil
 }
 
 // endToken close body of the envelope
-func (tokens *tokenData) endBody(m string) {
+func (tokens *tokenData) endBody(wsdlOperation string) {
 	b := xml.EndElement{
 		Name: xml.Name{
 			Space: "",
@@ -240,9 +222,9 @@ func (tokens *tokenData) endBody(m string) {
 	r := xml.EndElement{
 		Name: xml.Name{
 			Space: "",
-			Local: m,
+			Local: wsdlOperation,
 		},
 	}
 
-	tokens.data = append(tokens.data, r, b)
+	tokens.data = append(tokens.data, segment{token: r}, segment{token: b})
 }

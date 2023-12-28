@@ -1,8 +1,8 @@
 package gosoap
 
 import (
+	"context"
 	"crypto/tls"
-	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -67,13 +67,6 @@ type CheckVatRequest struct {
 	VatNumber   string
 }
 
-func (r CheckVatRequest) SoapBuildRequest() *Request {
-	return NewRequest("checkVat", Params{
-		"countryCode": r.CountryCode,
-		"vatNumber":   r.VatNumber,
-	})
-}
-
 type CheckVatResponse struct {
 	CountryCode string `xml:"countryCode"`
 	VatNumber   string `xml:"vatNumber"`
@@ -117,7 +110,7 @@ func TestClient_Call(t *testing.T) {
 
 	params["vatNumber"] = "6388047V"
 	params["countryCode"] = "IE"
-	res, err = soap.Call("", params)
+	res, err = soap.Call(context.Background(), "", params)
 	if err == nil {
 		t.Errorf("method is empty")
 	}
@@ -126,12 +119,15 @@ func TestClient_Call(t *testing.T) {
 		t.Errorf("body is empty")
 	}
 
-	res, err = soap.Call("checkVat", params)
+	res, err = soap.Call(context.Background(), "checkVat", params)
 	if err != nil {
 		t.Errorf("error in soap call: %s", err)
 	}
 
-	res.Unmarshal(&rv)
+	err = res.Unmarshal(&rv)
+	if err != nil {
+		t.Errorf("error not expected: %s", err)
+	}
 	if rv.CountryCode != "IE" {
 		t.Errorf("error: %+v", rv)
 	}
@@ -141,13 +137,15 @@ func TestClient_Call(t *testing.T) {
 		t.Errorf("error not expected: %s", err)
 	}
 
-	res, err = soap.Call("CapitalCity", Params{"sCountryISOCode": "GB"})
+	res, err = soap.Call(context.Background(), "CapitalCity", Params{"sCountryISOCode": "GB"})
 	if err != nil {
 		t.Errorf("error in soap call: %s", err)
 	}
 
-	res.Unmarshal(&rc)
-
+	err = res.Unmarshal(&rc)
+	if err != nil {
+		t.Errorf("error not expected: %s", err)
+	}
 	if rc.CapitalCityResult != "London" {
 		t.Errorf("error: %+v", rc)
 	}
@@ -157,13 +155,15 @@ func TestClient_Call(t *testing.T) {
 		t.Errorf("error not expected: %s", err)
 	}
 
-	res, err = soap.Call("NumberToWords", Params{"ubiNum": "23"})
+	res, err = soap.Call(context.Background(), "NumberToWords", Params{"ubiNum": "23"})
 	if err != nil {
 		t.Errorf("error in soap call: %s", err)
 	}
 
-	res.Unmarshal(&rn)
-
+	err = res.Unmarshal(&rn)
+	if err != nil {
+		t.Errorf("error not expected: %s", err)
+	}
 	if rn.NumberToWordsResult != "twenty three " {
 		t.Errorf("error: %+v", rn)
 	}
@@ -173,26 +173,28 @@ func TestClient_Call(t *testing.T) {
 		t.Errorf("error not expected: %s", err)
 	}
 
-	res, err = soap.Call("Whois", Params{"DomainName": "google.com"})
+	res, err = soap.Call(context.Background(), "Whois", Params{"DomainName": "google.com"})
 	if err != nil {
 		t.Errorf("error in soap call: %s", err)
 	}
 
-	res.Unmarshal(&rw)
-
+	err = res.Unmarshal(&rw)
+	if err != nil {
+		t.Errorf("error not expected: %s", err)
+	}
 	if rw.WhoisResult != "0" {
 		t.Errorf("error: %+v", rw)
 	}
 
 	c := &Client{}
-	res, err = c.Call("", Params{})
+	_, err = c.Call(context.Background(), "", Params{})
 	if err == nil {
 		t.Errorf("error expected but nothing got.")
 	}
 
 	c.SetWSDL("://test.")
 
-	res, err = c.Call("checkVat", params)
+	_, err = c.Call(context.Background(), "checkVat", params)
 	if err == nil {
 		t.Errorf("invalid WSDL")
 	}
@@ -204,7 +206,7 @@ func (c customLogger) LogRequest(method string, dump []byte) {
 	var re = regexp.MustCompile(`(<vatNumber>)[\s\S]*?(<\/vatNumber>)`)
 	maskedResponse := re.ReplaceAllString(string(dump), `${1}XXX${2}`)
 
-	log.Println(fmt.Sprintf("%s request: %s", method, maskedResponse))
+	log.Printf("%s request: %s", method, maskedResponse)
 }
 
 func (c customLogger) LogResponse(method string, dump []byte) {
@@ -212,7 +214,7 @@ func (c customLogger) LogResponse(method string, dump []byte) {
 		return
 	}
 
-	log.Println(fmt.Sprintf("Response: %s", dump))
+	log.Printf("Response: %s", dump)
 }
 
 func TestClient_Call_WithCustomLogger(t *testing.T) {
@@ -226,7 +228,7 @@ func TestClient_Call_WithCustomLogger(t *testing.T) {
 
 	var res *Response
 
-	res, err = soap.CallByStruct(CheckVatRequest{
+	res, err = soap.Call(context.Background(), "CheckVatRequest", CheckVatRequest{
 		CountryCode: "IE",
 		VatNumber:   "6388047V",
 	})
@@ -234,12 +236,15 @@ func TestClient_Call_WithCustomLogger(t *testing.T) {
 		t.Errorf("error in soap call: %s", err)
 	}
 
-	res.Unmarshal(&rv)
+	err = res.Unmarshal(&rv)
+	if err != nil {
+		t.Errorf("error not expected: %s", err)
+	}
 	if rv.CountryCode != "IE" {
 		t.Errorf("error: %+v", rv)
 	}
 
-	_, err = soap.CallByStruct(nil)
+	_, err = soap.Call(context.Background(), "test", nil)
 	if err == nil {
 		t.Error("err can't be nil")
 	}
@@ -252,8 +257,7 @@ func TestClient_CallByStruct(t *testing.T) {
 	}
 
 	var res *Response
-
-	res, err = soap.CallByStruct(CheckVatRequest{
+	res, err = soap.Call(context.Background(), "CheckVatRequest", CheckVatRequest{
 		CountryCode: "IE",
 		VatNumber:   "6388047V",
 	})
@@ -261,12 +265,15 @@ func TestClient_CallByStruct(t *testing.T) {
 		t.Errorf("error in soap call: %s", err)
 	}
 
-	res.Unmarshal(&rv)
+	err = res.Unmarshal(&rv)
+	if err != nil {
+		t.Errorf("error not expected: %s", err)
+	}
 	if rv.CountryCode != "IE" {
 		t.Errorf("error: %+v", rv)
 	}
 
-	_, err = soap.CallByStruct(nil)
+	_, err = soap.Call(context.Background(), "CheckVatRequest", nil)
 	if err == nil {
 		t.Error("err can't be nil")
 	}
@@ -278,7 +285,7 @@ func TestClient_Call_NonUtf8(t *testing.T) {
 		t.Errorf("error not expected: %s", err)
 	}
 
-	_, err = soap.Call("login", Params{"client": "demo", "username": "robert", "password": "iliasdemo"})
+	_, err = soap.Call(context.Background(), "login", Params{"client": "demo", "username": "robert", "password": "iliasdemo"})
 	if err != nil {
 		t.Errorf("error in soap call: %s", err)
 	}
@@ -291,17 +298,17 @@ func TestProcess_doRequest(t *testing.T) {
 		},
 	}
 
-	_, err := c.doRequest("")
+	_, err := c.doRequest(context.Background(), "")
 	if err == nil {
 		t.Errorf("body is empty")
 	}
 
-	_, err = c.doRequest("://teste.")
+	_, err = c.doRequest(context.Background(), "://teste.")
 	if err == nil {
 		t.Errorf("invalid WSDL")
 	}
 
-	_, err = c.doRequest("https://google.com/non-existent-url")
+	_, err = c.doRequest(context.Background(), "https://google.com/non-existent-url")
 	if err == nil {
 		t.Errorf("err can't be nil")
 	}
