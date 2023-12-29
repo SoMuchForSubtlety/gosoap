@@ -39,7 +39,7 @@ func (p *process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	segments.startEnvelope()
 
 	if p.Request.HeaderEntries != nil {
-		segments.startHeader()
+		segments.startHeader(namespace)
 		segments.recursiveEncode(p.Request.HeaderEntries)
 		segments.endHeader()
 	}
@@ -160,11 +160,14 @@ func (tokens *tokenData) endEnvelope() {
 	tokens.data = append(tokens.data, segment{token: e})
 }
 
-func (tokens *tokenData) startHeader() {
+func (tokens *tokenData) startHeader(namespace string) {
 	h := xml.StartElement{
 		Name: xml.Name{
 			Space: "",
 			Local: fmt.Sprintf("%s:Header", soapPrefix),
+		},
+		Attr: []xml.Attr{
+			{Name: xml.Name{Space: "", Local: "xmlns"}, Value: namespace},
 		},
 	}
 
