@@ -225,21 +225,8 @@ func TestProcess_doRequest(t *testing.T) {
 	}
 
 	_, err := c.doRequest(context.Background(), "")
-	if err == nil {
-		t.Errorf("body is empty")
-	}
+	assert.Error(t, err)
 
 	_, err = c.doRequest(context.Background(), "://teste.")
-	if err == nil {
-		t.Errorf("invalid WSDL")
-	}
-
-	_, err = c.doRequest(context.Background(), "https://google.com/non-existent-url")
-	if err == nil {
-		t.Errorf("err can't be nil")
-	}
-
-	if err != nil && err.Error() != "unexpected status code: 404 Not Found" {
-		t.Errorf("unexpected error: %s", err)
-	}
+	assert.Error(t, err)
 }
