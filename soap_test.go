@@ -113,7 +113,7 @@ func TestValidRequests(t *testing.T) {
 				Name:        "GOOGLE IRELAND LIMITED",
 				Address:     "3RD FLOOR, GORDON HOUSE, BARROW STREET, DUBLIN 4",
 				Valid:       "true",
-				RequestDate: time.Now().Format("2006-01-02-07:00"),
+				RequestDate: time.Now().Format(time.DateOnly) + "+01:00",
 			},
 		},
 		{
