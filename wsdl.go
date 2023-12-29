@@ -219,5 +219,8 @@ type Fault struct {
 }
 
 func (f *Fault) String() string {
-	return fmt.Sprintf("[%s]: %s | Detail: %s", f.Code, f.Description, f.Detail)
+	if f.Detail != "" {
+		return fmt.Sprintf("[%s]: %s | Detail: %s", f.Code, f.Description, f.Detail)
+	}
+	return fmt.Sprintf("[%s]: %s", f.Code, f.Description)
 }
