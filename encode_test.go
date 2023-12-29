@@ -39,6 +39,7 @@ func TestInvalidRequests(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			var err error
 			_, err = soap.Call(context.Background(), "checkVat", tc.params)
 			assert.EqualError(t, err, tc.err)
 		})
