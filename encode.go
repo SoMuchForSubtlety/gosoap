@@ -23,36 +23,23 @@ func SetCustomEnvelope(prefix string, attrs map[string]string) {
 func (p *process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	segments := &tokenData{}
 
-	// start envelope
-	if p.Client.Definitions == nil {
-		return fmt.Errorf("definitions is nil")
-	}
-
-	namespace := ""
-	if p.Client.Definitions.Types != nil {
-		schema := p.Client.Definitions.Types[0].XsdSchema[0]
-		namespace = schema.TargetNamespace
-		if namespace == "" && len(schema.Imports) > 0 {
-			namespace = schema.Imports[0].Namespace
-		}
-	}
 	segments.startEnvelope()
 
-	if p.Request.HeaderEntries != nil {
-		segments.startHeader(namespace)
-		segments.recursiveEncode(p.Request.HeaderEntries)
+	if p.request.HeaderEntries != nil {
+		segments.startHeader(p.namespace)
+		segments.recursiveEncode(p.request.HeaderEntries)
 		segments.endHeader()
 	}
 
-	err := segments.startBody(p.Request.WSDLOperation, namespace)
+	err := segments.startBody(p.request.WSDLOperation, p.namespace)
 	if err != nil {
 		return err
 	}
 
-	segments.recursiveEncode(p.Request.Body)
+	segments.recursiveEncode(p.request.Body)
 
 	// end envelope
-	segments.endBody(p.Request.WSDLOperation)
+	segments.endBody(p.request.WSDLOperation)
 	segments.endEnvelope()
 
 	for _, t := range segments.data {

@@ -179,8 +179,8 @@ func getWsdlBody(u string, c *http.Client) (reader io.ReadCloser, err error) {
 	return r.Body, nil
 }
 
-// getWsdlDefinitions sent request to the wsdl url and set definitions on struct
-func getWsdlDefinitions(u string, c *http.Client) (wsdl *wsdlDefinitions, err error) {
+// getWSDLDefinitions sent request to the wsdl url and set definitions on struct
+func getWSDLDefinitions(u string, c *http.Client) (wsdl *wsdlDefinitions, err error) {
 	reader, err := getWsdlBody(u, c)
 	if err != nil {
 		return nil, err

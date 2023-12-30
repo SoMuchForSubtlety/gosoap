@@ -48,7 +48,7 @@ func (r *Response) Unmarshal(v any) error {
 	return xml.Unmarshal(r.Body, v)
 }
 
-func (r *Response) UnmarshalHeaders(v any) error {
+func (r *Response) UnmarshalHeader(v any) error {
 	if len(r.HeaderEntries) == 0 {
 		return fmt.Errorf("Header is empty")
 	}

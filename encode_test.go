@@ -13,8 +13,8 @@ import (
 
 func TestInvalidRequests(t *testing.T) {
 	t.Parallel()
-	soap, err := SoapClientWithConfig("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil, &Config{
-		Dump: true,
+	soap, err := NewClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", &Config{
+		LogRequests: true,
 	})
 	assert.NoError(t, err)
 
@@ -54,7 +54,7 @@ func TestSetCustomEnvelope(t *testing.T) {
 	})
 
 	// TODO: actual test
-	_, err := SoapClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
+	_, err := NewClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
 	assert.NoError(t, err)
 }
 
@@ -69,14 +69,10 @@ type TestHeader2 struct {
 	Value3  string   `xml:"Value3"`
 }
 
-func TestClient_Headers(t *testing.T) {
-	t.Parallel()
-	soap, err := SoapClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	assert.NoError(t, err)
-
+func TestClient_Header(t *testing.T) {
 	p := process{
-		Client: soap,
-		Request: &Request{
+		namespace: "aaaaa",
+		request: &Request{
 			WSDLOperation: "aaaaa",
 			HeaderEntries: []any{
 				TestHeader{
@@ -91,19 +87,16 @@ func TestClient_Headers(t *testing.T) {
 	}
 
 	var resultBuf bytes.Buffer
-	err = p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
+	err := p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
 	assert.NoError(t, err)
-	fmt.Println(resultBuf.String())
+	// FIXME: actual test
 }
 
 func TestClient_HeaderArray(t *testing.T) {
 	t.Parallel()
-	soap, err := SoapClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
-	assert.NoError(t, err)
-
 	p := process{
-		Client: soap,
-		Request: &Request{
+		namespace: "aaaaa",
+		request: &Request{
 			WSDLOperation: "wsdlOp",
 			HeaderEntries: []any{
 				TestHeader{
@@ -117,8 +110,9 @@ func TestClient_HeaderArray(t *testing.T) {
 		},
 	}
 
+	// FIXME: assert result
 	var resultBuf bytes.Buffer
-	err = p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
+	err := p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
 	assert.NoError(t, err)
 	fmt.Println(resultBuf.String())
 }

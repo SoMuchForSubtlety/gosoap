@@ -1,6 +1,6 @@
 module github.com/tiaguinho/gosoap
 
-go 1.18
+go 1.21
 
 require (
 	golang.org/x/net v0.19.0

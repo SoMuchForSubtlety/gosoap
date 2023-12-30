@@ -3,9 +3,7 @@ package gosoap
 import (
 	"context"
 	"crypto/tls"
-	"log"
 	"net/http"
-	"regexp"
 	"testing"
 	"time"
 
@@ -46,7 +44,7 @@ var scts = []struct {
 func TestSoapClient(t *testing.T) {
 	t.Parallel()
 	for _, sct := range scts {
-		_, err := SoapClient(sct.URL, nil)
+		_, err := NewClient(sct.URL, nil)
 		if err != nil && sct.Err {
 			t.Errorf("URL: %s - error: %s", sct.URL, err)
 		}
@@ -55,9 +53,11 @@ func TestSoapClient(t *testing.T) {
 
 func TestSoapClientWithClient(t *testing.T) {
 	t.Parallel()
-	client, err := SoapClient(scts[3].URL, scts[3].Client)
+	client, err := NewClient(scts[3].URL, &Config{
+		Client: scts[3].Client,
+	})
 
-	if client.HTTPClient != scts[3].Client {
+	if client.httpClient != scts[3].Client {
 		t.Errorf("HTTP client is not the same as in initialization: - error: %s", err)
 	}
 
@@ -142,7 +142,7 @@ func TestValidRequests(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			client, err := SoapClientWithConfig(tc.wsdl, nil, &Config{Dump: true})
+			client, err := NewClient(tc.wsdl, &Config{LogRequests: true})
 			require.NoError(t, err)
 			res, err := client.Call(context.Background(), tc.operation, tc.request)
 			require.NoError(t, err)
@@ -158,75 +158,15 @@ func TestInvalidWSDL(t *testing.T) {
 	t.Parallel()
 	c := &Client{}
 	_, err := c.Call(context.Background(), "", Params{})
-	assert.ErrorContains(t, err, "unsupported protocol scheme")
-
-	c.SetWSDL("://test.")
-	_, err = c.Call(context.Background(), "checkVat", Params{})
-	assert.ErrorContains(t, err, "missing protocol scheme")
-}
-
-type customLogger struct{}
-
-func (c customLogger) LogRequest(method string, dump []byte) {
-	re := regexp.MustCompile(`(<vatNumber>)[\s\S]*?(<\/vatNumber>)`)
-	maskedResponse := re.ReplaceAllString(string(dump), `${1}XXX${2}`)
-
-	log.Printf("%s request: %s", method, maskedResponse)
-}
-
-func (c customLogger) LogResponse(method string, dump []byte) {
-	if method == "checkVat" {
-		return
-	}
-
-	log.Printf("Response: %s", dump)
-}
-
-func TestClient_Call_WithCustomLogger(t *testing.T) {
-	t.Parallel()
-	soap, err := SoapClientWithConfig("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
-		nil,
-		&Config{Dump: true, Logger: &customLogger{}},
-	)
-	assert.NoError(t, err)
-
-	var res *Response
-
-	res, err = soap.Call(context.Background(), "checkVat", Params{
-		"countryCode": "IE",
-		"vatNumber":   "6388047V",
-	})
-	assert.NoError(t, err)
-
-	var rv CheckVatResponse
-	err = res.Unmarshal(&rv)
-	assert.NoError(t, err)
-	if rv.CountryCode != "IE" {
-		t.Errorf("error: %+v", rv)
-	}
+	assert.ErrorContains(t, err, "wsdl definitions not found")
 }
 
 func TestClient_Call_NonUtf8(t *testing.T) {
 	t.Skip("server is down")
 	t.Parallel()
-	soap, err := SoapClient("https://demo.ilias.de/webservice/soap/server.php?wsdl", nil)
+	soap, err := NewClient("https://demo.ilias.de/webservice/soap/server.php?wsdl", nil)
 	assert.NoError(t, err)
 
 	_, err = soap.Call(context.Background(), "login", Params{"client": "demo", "username": "robert", "password": "iliasdemo"})
 	assert.NoError(t, err)
-}
-
-func TestProcess_doRequest(t *testing.T) {
-	t.Parallel()
-	c := &process{
-		Client: &Client{
-			HTTPClient: &http.Client{},
-		},
-	}
-
-	_, err := c.doRequest(context.Background(), "")
-	assert.Error(t, err)
-
-	_, err = c.doRequest(context.Background(), "://teste.")
-	assert.Error(t, err)
 }

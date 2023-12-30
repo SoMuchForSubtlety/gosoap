@@ -7,20 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"strings"
-	"sync"
-	"time"
 
 	"golang.org/x/net/html/charset"
 )
-
-type SoapParams any
-
-// HeaderParams holds params specific to the header
-type HeaderParams []SoapParams
 
 // Params type is used to set the params in soap request
 type Params map[string]any
@@ -30,155 +22,101 @@ type (
 	SliceParams []any
 )
 
-type DumpLogger interface {
-	LogRequest(method string, dump []byte)
-	LogResponse(method string, dump []byte)
-}
-
-type fmtLogger struct{}
-
-func (l *fmtLogger) LogRequest(method string, dump []byte) {
-	fmt.Printf("Request:\n%v\n----\n", string(dump))
-}
-
-func (l *fmtLogger) LogResponse(method string, dump []byte) {
-	fmt.Printf("Response:\n%v\n----\n", string(dump))
-}
-
 // Config config the Client
 type Config struct {
-	Dump   bool
-	Logger DumpLogger
+	Client      *http.Client
+	AutoAction  bool
+	LogRequests bool
+	Logger      CommunicationLogger
 }
 
-// SoapClient return new *Client to handle the requests with the WSDL
-func SoapClient(wsdl string, httpClient *http.Client) (*Client, error) {
-	return SoapClientWithConfig(wsdl, httpClient, &Config{Dump: false, Logger: &fmtLogger{}})
-}
-
-// SoapClientWithConfig return new *Client to handle the requests with the WSDL
-func SoapClientWithConfig(wsdl string, httpClient *http.Client, config *Config) (*Client, error) {
-	_, err := url.Parse(wsdl)
-	if err != nil {
-		return nil, err
+// NewClient return new *Client to handle the requests with the WSDL
+func NewClient(wsdlURL string, config *Config) (*Client, error) {
+	if config == nil {
+		config = &Config{}
 	}
 
-	if httpClient == nil {
-		httpClient = &http.Client{}
+	if config.Client == nil {
+		config.Client = http.DefaultClient
 	}
 
 	if config.Logger == nil {
-		config.Logger = &fmtLogger{}
+		// default to info because the default logger has debug logs disabled
+		config.Logger = NewSlogAdapter(slog.Default(), slog.LevelInfo)
 	}
 
-	c := &Client{
-		wsdl:       wsdl,
-		config:     config,
-		HTTPClient: httpClient,
-		AutoAction: false,
+	definitions, err := getWSDLDefinitions(wsdlURL, config.Client)
+	if err != nil {
+		return nil, fmt.Errorf("could not load WSDL: %w", err)
 	}
-	c.initWsdl()
 
-	return c, nil
+	var namespace string
+	if definitions.Types != nil {
+		schema := definitions.Types[0].XsdSchema[0]
+		namespace = schema.TargetNamespace
+		if namespace == "" && len(schema.Imports) > 0 {
+			namespace = schema.Imports[0].Namespace
+		}
+	}
+
+	return &Client{
+		config:        *config,
+		httpClient:    config.Client,
+		definitions:   definitions,
+		URL:           strings.TrimSuffix(definitions.TargetNamespace, "/"),
+		soapAddress:   definitions.Services[0].Ports[0].SoapAddresses[0].Location,
+		soapNamespace: namespace,
+	}, nil
 }
 
 // Client struct hold all the information about WSDL,
 // request and response of the server
 type Client struct {
-	HTTPClient  *http.Client
-	AutoAction  bool
-	URL         string
-	Definitions *wsdlDefinitions
-	// Must be set before first request otherwise has no effect, minimum is 15 minutes.
-	RefreshDefinitionsAfter time.Duration
-	Username                string
-	Password                string
+	httpClient *http.Client
+	URL        string
 
-	once                 sync.Once
-	definitionsErr       error
-	onRequest            sync.WaitGroup
-	onDefinitionsRefresh sync.WaitGroup
-	wsdl                 string
-	config               *Config
+	soapAddress   string
+	soapNamespace string
+	definitions   *wsdlDefinitions
+	// Must be set before first request otherwise has no effect, minimum is 15 minutes.
+	Username string
+	Password string
+
+	config Config
 }
 
 func (c *Client) Call(ctx context.Context, wsdlOperation string, body any, headerParams ...any) (res *Response, err error) {
 	return c.Do(ctx, NewRequest(wsdlOperation, body, headerParams...))
 }
 
-func (c *Client) waitAndRefreshDefinitions(d time.Duration) {
-	for {
-		time.Sleep(d)
-		c.onRequest.Wait()
-		c.onDefinitionsRefresh.Add(1)
-		c.initWsdl()
-		c.onDefinitionsRefresh.Done()
-	}
-}
-
-func (c *Client) initWsdl() {
-	c.Definitions, c.definitionsErr = getWsdlDefinitions(c.wsdl, c.HTTPClient)
-	if c.definitionsErr == nil {
-		c.URL = strings.TrimSuffix(c.Definitions.TargetNamespace, "/")
-	}
-}
-
-// SetWSDL set WSDL url
-func (c *Client) SetWSDL(wsdl string) {
-	c.onRequest.Wait()
-	c.onDefinitionsRefresh.Wait()
-	c.onRequest.Add(1)
-	c.onDefinitionsRefresh.Add(1)
-	defer c.onRequest.Done()
-	defer c.onDefinitionsRefresh.Done()
-	c.wsdl = wsdl
-	c.initWsdl()
-}
-
 // Do Process Soap Request
 func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error) {
-	c.onDefinitionsRefresh.Wait()
-	c.onRequest.Add(1)
-	defer c.onRequest.Done()
-
-	c.once.Do(func() {
-		c.initWsdl()
-		// 15 minute to prevent abuse.
-		if c.RefreshDefinitionsAfter >= 15*time.Minute {
-			go c.waitAndRefreshDefinitions(c.RefreshDefinitionsAfter)
-		}
-	})
-
-	if c.definitionsErr != nil {
-		return nil, c.definitionsErr
-	}
-
-	if c.Definitions == nil {
+	if c.definitions == nil {
 		return nil, errors.New("wsdl definitions not found")
 	}
 
-	if len(c.Definitions.Services) == 0 {
+	if len(c.definitions.Services) == 0 {
 		return nil, errors.New("no services found in wsdl definitions")
 	}
 
 	p := &process{
-		Client:     c,
-		Request:    req,
-		SoapAction: c.Definitions.GetSoapActionFromWsdlOperation(req.WSDLOperation),
+		namespace:  c.soapNamespace,
+		request:    req,
+		soapAction: c.definitions.GetSoapActionFromWsdlOperation(req.WSDLOperation),
 	}
 
-	if p.SoapAction == "" && c.AutoAction {
-		p.SoapAction = fmt.Sprintf("%s/%s/%s", c.URL, c.Definitions.Services[0].Name, req.WSDLOperation)
+	if p.soapAction == "" && c.config.AutoAction {
+		p.soapAction = fmt.Sprintf("%s/%s/%s", c.URL, c.definitions.Services[0].Name, req.WSDLOperation)
 	}
 
-	p.Payload, err = xml.MarshalIndent(p, "", "    ")
+	p.payload, err = xml.MarshalIndent(p, "", "    ")
 	if err != nil {
 		return nil, err
 	}
 
-	b, err := p.doRequest(ctx, c.Definitions.Services[0].Ports[0].SoapAddresses[0].Location)
+	b, err := c.doRequest(ctx, p)
 	if err != nil {
-		return nil, ErrorWithPayload{err, p.Payload}
+		return nil, ErrorWithPayload{err, p.payload}
 	}
 
 	var soap SoapEnvelope
@@ -196,70 +134,81 @@ func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error
 		HeaderEntries: soap.Header.Contents,
 	}
 	if err != nil {
-		return res, ErrorWithPayload{err, p.Payload}
+		return res, ErrorWithPayload{err, p.payload}
 	}
 
 	return res, nil
 }
 
 type process struct {
-	Client  *Client
-	Request *Request
+	request   *Request
+	namespace string
 	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383528
-	SoapAction string
-	Payload    []byte
+	soapAction string
+	payload    []byte
 }
 
 // doRequest makes new request to the server using the c.Method, c.URL and the body.
 // body is enveloped in Do method
-func (p *process) doRequest(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(p.Payload))
+func (c *Client) doRequest(ctx context.Context, p *process) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.soapAddress, bytes.NewBuffer(p.payload))
 	if err != nil {
 		return nil, err
 	}
 
-	if p.Client.config != nil && p.Client.config.Dump {
-		dump, err := httputil.DumpRequestOut(req, true)
+	if c.config.LogRequests {
+		var body []byte
+		req.Body, body, err = drainBody(req.Body)
 		if err != nil {
 			return nil, err
 		}
-		p.Client.config.Logger.LogRequest(p.Request.WSDLOperation, dump)
+		c.config.Logger.LogRequest(p.request.WSDLOperation, req.Header, body)
 	}
 
-	if p.Client.Username != "" && p.Client.Password != "" {
-		req.SetBasicAuth(p.Client.Username, p.Client.Password)
+	if c.Username != "" && c.Password != "" {
+		req.SetBasicAuth(c.Username, c.Password)
 	}
 
-	req.ContentLength = int64(len(p.Payload))
+	req.ContentLength = int64(len(p.payload))
 
 	req.Header.Add("Content-Type", "text/xml;charset=UTF-8")
 	req.Header.Add("Accept", "text/xml")
-	if p.SoapAction != "" {
-		req.Header.Add("SOAPAction", p.SoapAction)
+	if p.soapAction != "" {
+		req.Header.Add("SOAPAction", p.soapAction)
 	}
 
-	resp, err := p.httpClient().Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if p.Client.config != nil && p.Client.config.Dump {
-		dump, err := httputil.DumpResponse(resp, true)
+	if c.config.LogRequests {
+		var body []byte
+		resp.Body, body, err = drainBody(resp.Body)
 		if err != nil {
 			return nil, err
 		}
-		p.Client.config.Logger.LogResponse(p.Request.WSDLOperation, dump)
+		c.config.Logger.LogResponse(p.request.WSDLOperation, req.Header, body)
 	}
 
 	return io.ReadAll(resp.Body)
 }
 
-func (p *process) httpClient() *http.Client {
-	if p.Client.HTTPClient != nil {
-		return p.Client.HTTPClient
+// from net/http/httputil
+func drainBody(b io.ReadCloser) (r1 io.ReadCloser, r2 []byte, err error) {
+	if b == nil || b == http.NoBody {
+		// No copying needed. Preserve the magic sentinel meaning of NoBody.
+		return http.NoBody, nil, nil
 	}
-	return http.DefaultClient
+	var buf bytes.Buffer
+	if _, err = buf.ReadFrom(b); err != nil {
+		return nil, nil, err
+	}
+	if err = b.Close(); err != nil {
+		return nil, nil, err
+	}
+	return io.NopCloser(&buf), buf.Bytes(), nil
 }
 
 // ErrorWithPayload error payload schema
