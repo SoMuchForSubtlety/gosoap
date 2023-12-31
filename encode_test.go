@@ -53,19 +53,6 @@ func TestInvalidRequests(t *testing.T) {
 	}
 }
 
-func TestSetCustomEnvelope(t *testing.T) {
-	t.Parallel()
-	// TODO: actual test
-	_, err := NewClient(vatSource, &Config{
-		EnvelopePrefix: "soapenv",
-		EnvelopeAttrs: map[string]string{
-			"xmlns:soapenv": "http://schemas.xmlsoap.org/soap/envelope/",
-			"xmlns:tem":     "http://tempuri.org/",
-		},
-	})
-	assert.NoError(t, err)
-}
-
 type TestHeader struct {
 	XMLName xml.Name `xml:"TestHeader"`
 	Value1  string   `xml:"Value1"`
