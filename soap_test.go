@@ -90,6 +90,8 @@ type NumberToWordsResponse struct {
 
 func TestValidRequests(t *testing.T) {
 	t.Parallel()
+	loc, err := time.LoadLocation("CET")
+	require.NoError(t, err)
 	testCases := []struct {
 		name         string
 		wsdl         string
@@ -113,7 +115,7 @@ func TestValidRequests(t *testing.T) {
 				Name:        "GOOGLE IRELAND LIMITED",
 				Address:     "3RD FLOOR, GORDON HOUSE, BARROW STREET, DUBLIN 4",
 				Valid:       "true",
-				RequestDate: time.Now().Format(time.DateOnly) + "+01:00",
+				RequestDate: time.Now().In(loc).Format("2006-01-02-07:00"),
 			},
 		},
 		{
