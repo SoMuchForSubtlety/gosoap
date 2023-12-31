@@ -52,13 +52,14 @@ func TestInvalidRequests(t *testing.T) {
 
 func TestSetCustomEnvelope(t *testing.T) {
 	t.Parallel()
-	SetCustomEnvelope("soapenv", map[string]string{
-		"xmlns:soapenv": "http://schemas.xmlsoap.org/soap/envelope/",
-		"xmlns:tem":     "http://tempuri.org/",
-	})
-
 	// TODO: actual test
-	_, err := NewClient(vatSource, nil)
+	_, err := NewClient(vatSource, &Config{
+		EnvelopePrefix: "soapenv",
+		EnvelopeAttrs: map[string]string{
+			"xmlns:soapenv": "http://schemas.xmlsoap.org/soap/envelope/",
+			"xmlns:tem":     "http://tempuri.org/",
+		},
+	})
 	assert.NoError(t, err)
 }
 
@@ -75,6 +76,9 @@ type TestHeader2 struct {
 
 func TestClient_Header(t *testing.T) {
 	p := process{
+		config: &Config{
+			EnvelopePrefix: "aaaa",
+		},
 		namespace: "aaaaa",
 		request: &Request{
 			WSDLOperation: "aaaaa",
@@ -99,6 +103,9 @@ func TestClient_Header(t *testing.T) {
 func TestClient_HeaderArray(t *testing.T) {
 	t.Parallel()
 	p := process{
+		config: &Config{
+			EnvelopePrefix: "aaaa",
+		},
 		namespace: "aaaaa",
 		request: &Request{
 			WSDLOperation: "wsdlOp",

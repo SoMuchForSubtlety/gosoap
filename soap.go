@@ -32,6 +32,9 @@ type Config struct {
 	Service string
 	Port    string
 
+	EnvelopePrefix string
+	EnvelopeAttrs  map[string]string
+
 	Username string
 	Password string
 }
@@ -49,6 +52,17 @@ func NewClient(wsdlSource WSDLSource, config *Config) (*Client, error) {
 	if config.Logger == nil {
 		// default to info because the default logger has debug logs disabled
 		config.Logger = NewSlogAdapter(slog.Default(), slog.LevelInfo)
+	}
+
+	if config.EnvelopePrefix == "" {
+		config.EnvelopePrefix = "soap"
+	}
+	if len(config.EnvelopeAttrs) == 0 {
+		config.EnvelopeAttrs = map[string]string{
+			"xmlns:xsi":  "http://www.w3.org/2001/XMLSchema-instance",
+			"xmlns:xsd":  "http://www.w3.org/2001/XMLSchema",
+			"xmlns:soap": "http://schemas.xmlsoap.org/soap/envelope/",
+		}
 	}
 
 	definitions, err := getWSDLDefinitions(wsdlSource, config)
@@ -166,6 +180,7 @@ func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error
 		return nil, err
 	}
 	p := &process{
+		config:     &c.config,
 		namespace:  c.namespace,
 		request:    req,
 		soapAction: action,
@@ -207,6 +222,7 @@ func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error
 }
 
 type process struct {
+	config    *Config
 	request   *Request
 	namespace string
 	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383528
