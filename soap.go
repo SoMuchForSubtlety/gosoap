@@ -28,10 +28,16 @@ type Config struct {
 	AutoAction  bool
 	LogRequests bool
 	Logger      CommunicationLogger
+
+	Service string
+	Port    string
+
+	Username string
+	Password string
 }
 
 // NewClient return new *Client to handle the requests with the WSDL
-func NewClient(wsdlURL string, config *Config) (*Client, error) {
+func NewClient(wsdlSource WSDLSource, config *Config) (*Client, error) {
 	if config == nil {
 		config = &Config{}
 	}
@@ -45,13 +51,14 @@ func NewClient(wsdlURL string, config *Config) (*Client, error) {
 		config.Logger = NewSlogAdapter(slog.Default(), slog.LevelInfo)
 	}
 
-	definitions, err := getWSDLDefinitions(wsdlURL, config.Client)
+	definitions, err := getWSDLDefinitions(wsdlSource, config)
 	if err != nil {
-		return nil, fmt.Errorf("could not load WSDL: %w", err)
+		return nil, err
 	}
 
 	var namespace string
 	if definitions.Types != nil {
+		// FIXME: this can be incorrect, we need to add a config option to select a type element (by targetNamespace?)
 		schema := definitions.Types[0].XsdSchema[0]
 		namespace = schema.TargetNamespace
 		if namespace == "" && len(schema.Imports) > 0 {
@@ -59,30 +66,93 @@ func NewClient(wsdlURL string, config *Config) (*Client, error) {
 		}
 	}
 
+	service, port, err := definitions.serviceAndPort(config.Service, config.Port)
+	if err != nil {
+		return nil, fmt.Errorf("could not determin SOAP address: %w", err)
+	}
+	config.Service = service.Name
+	config.Port = port.Name
+
+	bindingName := port.Binding
+	splitBindingName := strings.Split(port.Binding, ":")
+	if len(splitBindingName) == 2 {
+		bindingName = splitBindingName[1] // strip off the namespace
+	}
+	var binding *wsdlBinding
+	for _, b := range definitions.Bindings {
+		if b.Name == bindingName || b.Name == port.Binding {
+			binding = b
+			break
+		}
+	}
+	if binding == nil {
+		return nil, fmt.Errorf("could not find binding matching %q", port.Binding)
+	}
 	return &Client{
 		config:        *config,
 		httpClient:    config.Client,
-		definitions:   definitions,
-		URL:           strings.TrimSuffix(definitions.TargetNamespace, "/"),
-		soapAddress:   definitions.Services[0].Ports[0].SoapAddresses[0].Location,
-		soapNamespace: namespace,
+		binding:       binding,
+		autoActionURL: strings.TrimSuffix(definitions.TargetNamespace, "/"),
+		address:       port.SoapAddresses[0].Location, // TODO: use multiple addresses?
+		namespace:     namespace,
 	}, nil
+}
+
+func (d *wsdlDefinitions) serviceAndPort(serviceName, portName string) (*wsdlService, *wsdlPort, error) {
+	var service *wsdlService
+	if len(d.Services) == 0 {
+		return nil, nil, errors.New("WSDL has no services")
+	}
+	if serviceName == "" {
+		service = d.Services[0]
+	} else {
+		var possibleServices []string
+		for _, svc := range d.Services {
+			possibleServices = append(possibleServices, svc.Name)
+			if svc.Name == serviceName {
+				service = svc
+				break
+			}
+		}
+		if service == nil {
+			return nil, nil, fmt.Errorf("no service matching %q found, possible values are %v", serviceName, possibleServices)
+		}
+	}
+	if len(service.Ports) == 0 {
+		return nil, nil, fmt.Errorf("WSDL service %q has no ports", service.Name)
+	}
+	var port *wsdlPort
+	if portName == "" {
+		port = service.Ports[0]
+	} else {
+		var possiblePorts []string
+		for _, p := range service.Ports {
+			possiblePorts = append(possiblePorts, p.Name)
+			if p.Name == portName {
+				port = p
+				break
+			}
+		}
+		if port == nil {
+			return nil, nil, fmt.Errorf("no port matching %q found, possible values are %v", portName, possiblePorts)
+		}
+	}
+	if len(port.SoapAddresses) == 0 {
+		return nil, nil, fmt.Errorf("WSDL port %q has no addresses", port.Name)
+	}
+	return service, port, nil
 }
 
 // Client struct hold all the information about WSDL,
 // request and response of the server
 type Client struct {
 	httpClient *http.Client
-	URL        string
+	config     Config
 
-	soapAddress   string
-	soapNamespace string
-	definitions   *wsdlDefinitions
-	// Must be set before first request otherwise has no effect, minimum is 15 minutes.
-	Username string
-	Password string
-
-	config Config
+	address       string
+	namespace     string
+	autoActionURL string
+	binding       *wsdlBinding
 }
 
 func (c *Client) Call(ctx context.Context, wsdlOperation string, body any, headerParams ...any) (res *Response, err error) {
@@ -91,22 +161,18 @@ func (c *Client) Call(ctx context.Context, wsdlOperation string, body any, heade
 
 // Do Process Soap Request
 func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error) {
-	if c.definitions == nil {
-		return nil, errors.New("wsdl definitions not found")
+	action, err := c.binding.GetSoapActionFromWsdlOperation(req.WSDLOperation)
+	if err != nil {
+		return nil, err
 	}
-
-	if len(c.definitions.Services) == 0 {
-		return nil, errors.New("no services found in wsdl definitions")
-	}
-
 	p := &process{
-		namespace:  c.soapNamespace,
+		namespace:  c.namespace,
 		request:    req,
-		soapAction: c.definitions.GetSoapActionFromWsdlOperation(req.WSDLOperation),
+		soapAction: action,
 	}
 
 	if p.soapAction == "" && c.config.AutoAction {
-		p.soapAction = fmt.Sprintf("%s/%s/%s", c.URL, c.definitions.Services[0].Name, req.WSDLOperation)
+		p.soapAction = fmt.Sprintf("%s/%s/%s", c.autoActionURL, c.config.Service, req.WSDLOperation)
 	}
 
 	p.payload, err = xml.MarshalIndent(p, "", "    ")
@@ -151,7 +217,7 @@ type process struct {
 // doRequest makes new request to the server using the c.Method, c.URL and the body.
 // body is enveloped in Do method
 func (c *Client) doRequest(ctx context.Context, p *process) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.soapAddress, bytes.NewBuffer(p.payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.address, bytes.NewBuffer(p.payload))
 	if err != nil {
 		return nil, err
 	}
@@ -165,8 +231,8 @@ func (c *Client) doRequest(ctx context.Context, p *process) ([]byte, error) {
 		c.config.Logger.LogRequest(p.request.WSDLOperation, req.Header, body)
 	}
 
-	if c.Username != "" && c.Password != "" {
-		req.SetBasicAuth(c.Username, c.Password)
+	if c.config.Username != "" && c.config.Password != "" {
+		req.SetBasicAuth(c.config.Username, c.config.Password)
 	}
 
 	req.ContentLength = int64(len(p.payload))

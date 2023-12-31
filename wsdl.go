@@ -1,6 +1,7 @@
 package gosoap
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -12,14 +13,15 @@ import (
 )
 
 type wsdlDefinitions struct {
-	Name            string           `xml:"name,attr"`
-	TargetNamespace string           `xml:"targetNamespace,attr"`
-	Imports         []*wsdlImport    `xml:"http://schemas.xmlsoap.org/wsdl/ import"`
-	Types           []*wsdlTypes     `xml:"http://schemas.xmlsoap.org/wsdl/ types"`
-	Messages        []*wsdlMessage   `xml:"http://schemas.xmlsoap.org/wsdl/ message"`
-	PortTypes       []*wsdlPortTypes `xml:"http://schemas.xmlsoap.org/wsdl/ portType"`
-	Services        []*wsdlService   `xml:"http://schemas.xmlsoap.org/wsdl/ service"`
-	Bindings        []*wsdlBinding   `xml:"http://schemas.xmlsoap.org/wsdl/ binding"`
+	Name            string        `xml:"name,attr"`
+	TargetNamespace string        `xml:"targetNamespace,attr"`
+	Imports         []*wsdlImport `xml:"http://schemas.xmlsoap.org/wsdl/ import"`
+	// https://www.w3.org/TR/2001/NOTE-wsdl-20010315#_types
+	Types     []*wsdlTypes     `xml:"http://schemas.xmlsoap.org/wsdl/ types"`
+	Messages  []*wsdlMessage   `xml:"http://schemas.xmlsoap.org/wsdl/ message"`
+	PortTypes []*wsdlPortTypes `xml:"http://schemas.xmlsoap.org/wsdl/ portType"`
+	Services  []*wsdlService   `xml:"http://schemas.xmlsoap.org/wsdl/ service"`
+	Bindings  []*wsdlBinding   `xml:"http://schemas.xmlsoap.org/wsdl/ binding"`
 }
 
 type wsdlBinding struct {
@@ -157,6 +159,25 @@ type xsdMaxInclusive struct {
 	Value string `xml:"value,attr"`
 }
 
+type WSDLSource func(config *Config) ([]byte, error)
+
+func SourceFromURI(uri string) WSDLSource {
+	return func(config *Config) ([]byte, error) {
+		res, err := getWsdlBody(uri, config.Client)
+		if err != nil {
+			return nil, fmt.Errorf("could not fetch WSDL resource: %w", err)
+		}
+		defer res.Close()
+		return io.ReadAll(res)
+	}
+}
+
+func SourceFromBytes(raw []byte) WSDLSource {
+	return func(config *Config) ([]byte, error) {
+		return raw, nil
+	}
+}
+
 func getWsdlBody(u string, c *http.Client) (reader io.ReadCloser, err error) {
 	parse, err := url.Parse(u)
 	if err != nil {
@@ -180,14 +201,12 @@ func getWsdlBody(u string, c *http.Client) (reader io.ReadCloser, err error) {
 }
 
 // getWSDLDefinitions sent request to the wsdl url and set definitions on struct
-func getWSDLDefinitions(u string, c *http.Client) (wsdl *wsdlDefinitions, err error) {
-	reader, err := getWsdlBody(u, c)
+func getWSDLDefinitions(source WSDLSource, c *Config) (wsdl *wsdlDefinitions, err error) {
+	raw, err := source(c)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not load WSDL: %w", err)
 	}
-	defer reader.Close()
-
-	decoder := xml.NewDecoder(reader)
+	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	decoder.CharsetReader = charset.NewReaderLabel
 	err = decoder.Decode(&wsdl)
 
@@ -196,19 +215,20 @@ func getWSDLDefinitions(u string, c *http.Client) (wsdl *wsdlDefinitions, err er
 
 // GetSoapActionFromWsdlOperation the SoapAction of an operation might differ from the action wsdl-operation name
 // if any SoapAction name is set in the wsdlOperation binding, use that.
-func (wsdl *wsdlDefinitions) GetSoapActionFromWsdlOperation(operation string) string {
+func (b *wsdlBinding) GetSoapActionFromWsdlOperation(operation string) (string, error) {
+	if b == nil {
+		return "", fmt.Errorf("WSDL binding is nil")
+	}
 	// in the future it would be nice to have Operations be map[string]*wsdlOperation,
 	// where the map key is the wsdlOperation name
-	if wsdl.Bindings[0] != nil {
-		for _, o := range wsdl.Bindings[0].Operations {
-			if o.Name == operation {
-				if len(o.SoapOperations) > 0 && o.SoapOperations[0] != nil {
-					return o.SoapOperations[0].SoapAction
-				}
+	for _, o := range b.Operations {
+		if o.Name == operation {
+			if len(o.SoapOperations) > 0 {
+				return o.SoapOperations[0].SoapAction, nil
 			}
 		}
 	}
-	return ""
+	return "", fmt.Errorf("could not find operating matching %q in binding %q", operation, b.Name)
 }
 
 // Fault see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383507

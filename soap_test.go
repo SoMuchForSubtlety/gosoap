@@ -12,26 +12,29 @@ import (
 )
 
 var scts = []struct {
-	URL    string
-	Err    bool
-	Client *http.Client
+	name        string
+	source      WSDLSource
+	expectedErr string
+	client      *http.Client
 }{
 	{
-		URL: "://www.server",
-		Err: false,
+		name:        "invalid URL",
+		source:      SourceFromURI("://www.server"),
+		expectedErr: "could not load WSDL: could not fetch WSDL resource: parse \"://www.server\": missing protocol scheme",
 	},
 	{
-		URL: "",
-		Err: false,
+		name:        "no URL",
+		source:      SourceFromURI(""),
+		expectedErr: "could not load WSDL: could not fetch WSDL resource: Get \"\": unsupported protocol scheme \"\"",
 	},
 	{
-		URL: "https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
-		Err: true,
+		name:   "good URL",
+		source: vatSource,
 	},
 	{
-		URL: "https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl",
-		Err: true,
-		Client: &http.Client{
+		name:   "custom client",
+		source: vatSource,
+		client: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
@@ -44,26 +47,29 @@ var scts = []struct {
 func TestSoapClient(t *testing.T) {
 	t.Parallel()
 	for _, sct := range scts {
-		_, err := NewClient(sct.URL, nil)
-		if err != nil && sct.Err {
-			t.Errorf("URL: %s - error: %s", sct.URL, err)
-		}
+		sct := sct
+		t.Run(sct.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewClient(sct.source, nil)
+			if sct.expectedErr != "" {
+				assert.EqualError(t, err, sct.expectedErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
 	}
 }
 
 func TestSoapClientWithClient(t *testing.T) {
 	t.Parallel()
-	client, err := NewClient(scts[3].URL, &Config{
-		Client: scts[3].Client,
+	client, err := NewClient(scts[3].source, &Config{
+		Client: scts[3].client,
 	})
 
-	if client.httpClient != scts[3].Client {
+	if client.httpClient != scts[3].client {
 		t.Errorf("HTTP client is not the same as in initialization: - error: %s", err)
 	}
-
-	if err != nil {
-		t.Errorf("URL: %s - error: %s", scts[3].URL, err)
-	}
+	assert.NoError(t, err)
 }
 
 type CheckVatRequest struct {
@@ -144,7 +150,7 @@ func TestValidRequests(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			client, err := NewClient(tc.wsdl, &Config{LogRequests: true})
+			client, err := NewClient(SourceFromURI(tc.wsdl), &Config{LogRequests: true})
 			require.NoError(t, err)
 			res, err := client.Call(context.Background(), tc.operation, tc.request)
 			require.NoError(t, err)
@@ -160,13 +166,13 @@ func TestInvalidWSDL(t *testing.T) {
 	t.Parallel()
 	c := &Client{}
 	_, err := c.Call(context.Background(), "", Params{})
-	assert.ErrorContains(t, err, "wsdl definitions not found")
+	assert.ErrorContains(t, err, "WSDL binding is nil")
 }
 
 func TestClient_Call_NonUtf8(t *testing.T) {
 	t.Skip("server is down")
 	t.Parallel()
-	soap, err := NewClient("https://demo.ilias.de/webservice/soap/server.php?wsdl", nil)
+	soap, err := NewClient(SourceFromURI("https://demo.ilias.de/webservice/soap/server.php?wsdl"), nil)
 	assert.NoError(t, err)
 
 	_, err = soap.Call(context.Background(), "login", Params{"client": "demo", "username": "robert", "password": "iliasdemo"})

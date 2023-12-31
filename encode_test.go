@@ -11,9 +11,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+var (
+	vatSource = SourceFromURI("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl")
+)
+
 func TestInvalidRequests(t *testing.T) {
 	t.Parallel()
-	soap, err := NewClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", &Config{
+	soap, err := NewClient(vatSource, &Config{
 		LogRequests: true,
 	})
 	assert.NoError(t, err)
@@ -54,7 +58,7 @@ func TestSetCustomEnvelope(t *testing.T) {
 	})
 
 	// TODO: actual test
-	_, err := NewClient("https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl", nil)
+	_, err := NewClient(vatSource, nil)
 	assert.NoError(t, err)
 }
 
