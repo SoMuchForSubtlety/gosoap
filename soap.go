@@ -175,19 +175,20 @@ func (c *Client) Call(ctx context.Context, wsdlOperation string, body any, heade
 
 // Do Process Soap Request
 func (c *Client) Do(ctx context.Context, req *Request) (res *Response, err error) {
-	action, err := c.binding.GetSoapActionFromWsdlOperation(req.WSDLOperation)
-	if err != nil {
-		return nil, err
+	var action string
+	if c.config.AutoAction {
+		action = fmt.Sprintf("%s/%s/%s", c.autoActionURL, c.config.Service, req.WSDLOperation)
+	} else {
+		action, err = c.binding.GetSoapActionFromWsdlOperation(req.WSDLOperation)
+		if err != nil {
+			return nil, err
+		}
 	}
 	p := &process{
 		config:     &c.config,
 		namespace:  c.namespace,
 		request:    req,
 		soapAction: action,
-	}
-
-	if p.soapAction == "" && c.config.AutoAction {
-		p.soapAction = fmt.Sprintf("%s/%s/%s", c.autoActionURL, c.config.Service, req.WSDLOperation)
 	}
 
 	p.payload, err = xml.MarshalIndent(p, "", "    ")

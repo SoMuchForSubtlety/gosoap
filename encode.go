@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"reflect"
+	"sort"
 )
 
 // MarshalXML envelope the body and encode to xml
@@ -104,13 +105,18 @@ func (tokens *tokenData) startEnvelope(c *Config) {
 		},
 	}
 
-	e.Attr = make([]xml.Attr, 0)
+	e.Attr = make([]xml.Attr, len(c.EnvelopeAttrs))
 	for local, value := range c.EnvelopeAttrs {
 		e.Attr = append(e.Attr, xml.Attr{
 			Name:  xml.Name{Space: "", Local: local},
 			Value: value,
 		})
 	}
+
+	// sort so get a deterministic order (for testing)
+	sort.Slice(e.Attr, func(i, j int) bool {
+		return e.Attr[i].Name.Local < e.Attr[j].Name.Local
+	})
 
 	tokens.data = append(tokens.data, segment{token: e})
 }

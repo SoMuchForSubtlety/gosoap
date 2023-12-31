@@ -1,14 +1,17 @@
 package gosoap
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/xml"
-	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -74,56 +77,132 @@ type TestHeader2 struct {
 	Value3  string   `xml:"Value3"`
 }
 
-func TestClient_Header(t *testing.T) {
-	p := process{
-		config: &Config{
-			EnvelopePrefix: "aaaa",
-		},
-		namespace: "aaaaa",
-		request: &Request{
-			WSDLOperation: "aaaaa",
-			HeaderEntries: []any{
-				TestHeader{
-					Value1: "test",
-					Value2: 123,
-				},
-				TestHeader2{
-					Value3: ":)",
-				},
-			},
-		},
-	}
-
-	var resultBuf bytes.Buffer
-	err := p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
-	assert.NoError(t, err)
-	// FIXME: actual test
-}
-
-func TestClient_HeaderArray(t *testing.T) {
+func TestEncoding(t *testing.T) {
 	t.Parallel()
-	p := process{
-		config: &Config{
-			EnvelopePrefix: "aaaa",
+	cases := []struct {
+		name           string
+		body           any
+		headers        []any
+		expectedAction string
+		expectedBody   string
+		config         Config
+	}{
+		{
+			name:           "simple",
+			body:           Params{"sIp": "127.0.0.1"},
+			expectedAction: "http://lavasoft.com/GetIpLocation",
+			expectedBody: `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <soap:Body>
+        <GetIpLocation xmlns="http://lavasoft.com/">
+            <sIp>127.0.0.1</sIp>
+        </GetIpLocation>
+    </soap:Body>
+</soap:Envelope>`,
 		},
-		namespace: "aaaaa",
-		request: &Request{
-			WSDLOperation: "wsdlOp",
-			HeaderEntries: []any{
+		{
+			name: "header",
+			body: Params{"sIp": "127.0.0.1"},
+			headers: []any{
 				TestHeader{
-					Value1: "test",
+					Value1: "testing",
 					Value2: 123,
 				},
 				TestHeader2{
-					Value3: ":)",
+					Value3: "aaa",
 				},
 			},
+			expectedAction: "http://lavasoft.com/GetIpLocation",
+			expectedBody: `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <soap:Header xmlns="http://lavasoft.com/">
+        <TestHeader>
+            <Value1>testing</Value1>
+            <Value2>123</Value2>
+        </TestHeader>
+        <TestHeader2>
+            <Value3>aaa</Value3>
+        </TestHeader2>
+    </soap:Header>
+    <soap:Body>
+        <GetIpLocation xmlns="http://lavasoft.com/">
+            <sIp>127.0.0.1</sIp>
+        </GetIpLocation>
+    </soap:Body>
+</soap:Envelope>`,
+		},
+		{
+			name:    "customized envelope",
+			body:    Params{"sIp": "127.0.0.1"},
+			headers: []any{Params{"h": "value"}},
+			config: Config{
+				EnvelopePrefix: "custom",
+				EnvelopeAttrs:  map[string]string{"test": "param"},
+			},
+			expectedAction: "http://lavasoft.com/GetIpLocation",
+			expectedBody: `<custom:Envelope test="param">
+    <custom:Header xmlns="http://lavasoft.com/">
+        <h>value</h>
+    </custom:Header>
+    <custom:Body>
+        <GetIpLocation xmlns="http://lavasoft.com/">
+            <sIp>127.0.0.1</sIp>
+        </GetIpLocation>
+    </custom:Body>
+</custom:Envelope>`,
+		},
+
+		{
+			name:           "auto action",
+			body:           Params{"sIp": "127.0.0.1"},
+			config:         Config{AutoAction: true},
+			expectedAction: "http://lavasoft.com/GeoIPService/GetIpLocation",
+			expectedBody: `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <soap:Body>
+        <GetIpLocation xmlns="http://lavasoft.com/">
+            <sIp>127.0.0.1</sIp>
+        </GetIpLocation>
+    </soap:Body>
+</soap:Envelope>`,
 		},
 	}
 
-	// FIXME: assert result
-	var resultBuf bytes.Buffer
-	err := p.MarshalXML(xml.NewEncoder(bufio.NewWriter(&resultBuf)), xml.StartElement{})
-	assert.NoError(t, err)
-	fmt.Println(resultBuf.String())
+	var reqBody []byte
+	var header http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		reqBody = body
+		header = r.Header
+		resp := `<?xml version="1.0" encoding="utf-8"?>
+			<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+				<soap:Body>
+					<m:Response xmlns:m="http://www.test.com/soap/">
+						<m:status>OK</m:status>
+					</m:Response>
+				</soap:Body>
+			</soap:Envelope>`
+		_, err = w.Write([]byte(resp))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	spec, err := os.ReadFile("./testdata/ipservice.wsdl")
+	require.NoError(t, err)
+	spec = bytes.ReplaceAll(spec, []byte("http://wsgeoip.lavasoft.com/ipservice.asmx"), []byte(server.URL))
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			config := tc.config
+			config.Client = server.Client()
+			config.Service = "GeoIPService"
+			config.Port = "GeoIPServiceSoap"
+			client, err := NewClient(SourceFromBytes(spec), &config)
+			require.NoError(t, err)
+			_, err = client.Call(context.Background(), "GetIpLocation", tc.body, tc.headers...)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedBody, string(reqBody))
+			assert.Equal(t, tc.expectedAction, header["Soapaction"][0])
+		})
+	}
 }
