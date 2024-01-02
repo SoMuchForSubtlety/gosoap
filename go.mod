@@ -1,4 +1,4 @@
-module github.com/tiaguinho/gosoap
+module github.com/SomuchForSubtlety/gosoap
 
 go 1.21
 
