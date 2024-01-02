@@ -2,18 +2,21 @@ package gosoap
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"testing"
 
-	"gotest.tools/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestUnmarshal(t *testing.T) {
-	var testCases = []struct {
-		description  string
-		response     *Response
-		decodeStruct interface{}
-		isFaultError bool
+	t.Parallel()
+	testCases := []struct {
+		description   string
+		response      *Response
+		decodeStruct  any
+		expectedFault Fault
+		expectedError string
 	}{
 		{
 			description: "case: fault error",
@@ -21,16 +24,17 @@ func TestUnmarshal(t *testing.T) {
 				Body: []byte(`
 				<soap:Fault>
 					<faultcode>soap:Server</faultcode>
-					<faultstring>Qube.Mama.SoapException: The remote server returned an error: (550) File unavailable (e.g., file not found, no access).
-				The remote server returned an error: (550) File unavailable (e.g., file not found, no access).
-					</faultstring>
+					<faultstring>Qube.Mama.SoapException: The remote server returned an error: (550) File unavailable (e.g., file not found, no access). The remote server returned an error: (550) File unavailable (e.g., file not found, no access).</faultstring>
 					<detail>
 					</detail>
 			</soap:Fault>	
 				`),
 			},
 			decodeStruct: &struct{}{},
-			isFaultError: true,
+			expectedFault: Fault{
+				Code:        "soap:Server",
+				Description: "Qube.Mama.SoapException: The remote server returned an error: (550) File unavailable (e.g., file not found, no access). The remote server returned an error: (550) File unavailable (e.g., file not found, no access).",
+			},
 		},
 		{
 			description: "case: unmarshal error",
@@ -52,10 +56,9 @@ func TestUnmarshal(t *testing.T) {
 				`),
 			},
 			decodeStruct: &struct {
-				XMLName            xml.Name `xml:"GetJobsByIsResponse"`
+				XMLName            xml.Name `xml:"GetJobsByIdsResponse"`
 				GetJobsByIDsResult string
 			}{},
-			isFaultError: false,
 		},
 		{
 			description: "case: nil error",
@@ -80,7 +83,6 @@ func TestUnmarshal(t *testing.T) {
 				XMLName            xml.Name `xml:"GetJobsByIdsResponse"`
 				GetJobsByIDsResult string
 			}{},
-			isFaultError: false,
 		},
 		{
 			description: "case: body is empty",
@@ -91,20 +93,30 @@ func TestUnmarshal(t *testing.T) {
 				XMLName            xml.Name `xml:"GetJobsByIdsResponse"`
 				GetJobsByIDsResult string
 			}{},
-			isFaultError: false,
+			expectedError: "body is empty",
 		},
 	}
 
 	for _, testCase := range testCases {
-		t.Logf("running %v test case", testCase.description)
-
-		err := testCase.response.Unmarshal(testCase.decodeStruct)
-		assert.Equal(t, testCase.isFaultError, IsFault(err))
+		testCase := testCase
+		t.Run(testCase.description, func(t *testing.T) {
+			t.Parallel()
+			err := testCase.response.Unmarshal(testCase.decodeStruct)
+			if testCase.expectedFault.Code != "" {
+				assert.True(t, errors.As(err, &FaultError{}), "should be a fault error")
+				assert.ErrorIs(t, err, FaultError{Fault: testCase.expectedFault})
+			} else if testCase.expectedError != "" {
+				assert.EqualError(t, err, testCase.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
 	}
 }
 
 func TestIsFault(t *testing.T) {
-	var testCases = []struct {
+	t.Parallel()
+	testCases := []struct {
 		description          string
 		err                  error
 		expectedIsFaultError bool
@@ -112,7 +124,7 @@ func TestIsFault(t *testing.T) {
 		{
 			description: "case: fault error",
 			err: FaultError{
-				fault: &Fault{
+				Fault: Fault{
 					Code: "SOAP-ENV:Client",
 				},
 			},
@@ -133,7 +145,6 @@ func TestIsFault(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Logf("running %v test case", testCase.description)
 
-		isFaultErr := IsFault(testCase.err)
-		assert.Equal(t, testCase.expectedIsFaultError, isFaultErr)
+		assert.Equal(t, testCase.expectedIsFaultError, errors.As(testCase.err, &FaultError{}))
 	}
 }

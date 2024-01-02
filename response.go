@@ -7,40 +7,33 @@ import (
 
 // Response Soap Response
 type Response struct {
-	Body    []byte
-	Header  []byte
-	Payload []byte
+	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383503
+	Body []byte
+	// see https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383497
+	HeaderEntries []byte
 }
 
 // FaultError implements error interface
 type FaultError struct {
-	fault *Fault
+	Fault Fault
 }
 
 func (e FaultError) Error() string {
-	if e.fault != nil {
-		return e.fault.String()
-	}
-
-	return ""
+	return e.Fault.String()
 }
 
-// IsFault returns whether the given error is a fault error or not.
-//
-// IsFault will return false when the error could not be typecasted to FaultError, because
-// every fault error should have it's dynamic type as FaultError.
-func IsFault(err error) bool {
-	if _, ok := err.(FaultError); !ok {
+func (e FaultError) Is(target error) bool {
+	f, ok := target.(FaultError)
+	if !ok {
 		return false
 	}
 
-	return true
+	return f.Fault.Code == e.Fault.Code && f.Fault.Description == e.Fault.Description
 }
 
-// Unmarshal get the body and unmarshal into the interface
-func (r *Response) Unmarshal(v interface{}) error {
+func (r *Response) Unmarshal(v any) error {
 	if len(r.Body) == 0 {
-		return fmt.Errorf("Body is empty")
+		return fmt.Errorf("body is empty")
 	}
 
 	var fault Fault
@@ -48,10 +41,17 @@ func (r *Response) Unmarshal(v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("error unmarshalling the body to Fault: %v", err.Error())
 	}
-
 	if fault.Code != "" {
-		return FaultError{fault: &fault}
+		return FaultError{Fault: fault}
 	}
 
 	return xml.Unmarshal(r.Body, v)
+}
+
+func (r *Response) UnmarshalHeader(v any) error {
+	if len(r.HeaderEntries) == 0 {
+		return fmt.Errorf("Header is empty")
+	}
+
+	return xml.Unmarshal(r.HeaderEntries, v)
 }

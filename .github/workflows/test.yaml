@@ -1,0 +1,21 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+name: Test
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Test
+        uses: robherley/go-test-action@v0.1.0
+        with:
+          testArguments: "-shuffle=on -race ./..."
