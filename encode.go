@@ -34,8 +34,10 @@ func (p *process) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 		var err error
 		if t.token != nil {
 			err = e.EncodeToken(t.token)
-		} else {
+		} else if t.value != nil {
 			err = e.Encode(t.value)
+		} else {
+			err = e.EncodeElement(t.namedValue.Value(), t.namedValue.Name())
 		}
 		if err != nil {
 			return err
@@ -49,9 +51,34 @@ type tokenData struct {
 	data []segment
 }
 
+type NamedElement interface {
+	Name() xml.StartElement
+	Value() any
+}
+
+func Named(element any, name string) named {
+	return named{
+		content: element,
+		start:   xml.StartElement{Name: xml.Name{Local: name}},
+	}
+}
+
+type named struct {
+	content any
+	start   xml.StartElement
+}
+
+func (n named) Name() xml.StartElement {
+	return n.start
+}
+func (n named) Value() any {
+	return n.content
+}
+
 type segment struct {
-	token xml.Token
-	value any
+	token      xml.Token
+	value      any
+	namedValue NamedElement
 }
 
 func (tokens *tokenData) recursiveEncode(hm any) {
@@ -92,8 +119,12 @@ func (tokens *tokenData) recursiveEncode(hm any) {
 	case reflect.String:
 		content := xml.CharData(v.String())
 		tokens.data = append(tokens.data, segment{token: content})
-	case reflect.Struct:
-		tokens.data = append(tokens.data, segment{value: hm})
+	case reflect.Struct, reflect.Pointer:
+		if named, ok := hm.(NamedElement); ok {
+			tokens.data = append(tokens.data, segment{namedValue: named})
+		} else {
+			tokens.data = append(tokens.data, segment{value: hm})
+		}
 	}
 }
 
